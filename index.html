@@ -115,9 +115,9 @@
   .city:hover { filter: brightness(0.85); }
   .city.selected { stroke: #c00; stroke-width: 1.5; }
   .pref-label-marker {
-    color: #1a3a5c; font-size: 18px; font-weight: 700;
-    letter-spacing: 0.15em;
-    text-shadow: 0 0 4px #fff, 0 0 4px #fff, 0 0 4px #fff, 0 0 4px #fff;
+    color: #1a3a5c; font-size: 13px; font-weight: 600;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
     white-space: nowrap; pointer-events: none;
     transform: translate(-50%, -50%);
     display: inline-block;
@@ -237,6 +237,8 @@ let nationalHasSelection = () => false;
 let nationalNameLookup = null;
 let nationalPointLookup = null;
 let nationalNearestMuni = null;
+let nationalPrefAggregates = new Map();
+let nationalPrefScale = { minLog: 0, maxLog: 1 };
 let selectedCity = null;
 let prefBounds = null;
 let nationalLoading = null;
@@ -858,6 +860,30 @@ function computeDCOutlineLatLngs(info) {
   return rings.map(ring => ring.map(p => [p[1], p[0]]));
 }
 
+function applyPrefHeatmap() {
+  if (!prefLayer) return;
+  const z = map.getZoom();
+  const lowZoom = z < ZOOM_ALL_THRESHOLD;
+  prefLayer.eachLayer(l => {
+    if (!lowZoom) {
+      // 高ズーム時は通常スタイル(透明境界線)
+      l.setStyle({ color: "#0d2238", weight: 4, fillOpacity: 0 });
+      return;
+    }
+    const name = l.feature.properties.nam_ja || l.feature.properties.name_ja || l.feature.properties.name;
+    const v = nationalPrefAggregates.get(name);
+    if (v && v > 0) {
+      l.setStyle({
+        fillColor: popColor(v, nationalPrefScale.minLog, nationalPrefScale.maxLog),
+        fillOpacity: 0.85,
+        color: "#5b8db8", weight: 0.7
+      });
+    } else {
+      l.setStyle({ fillColor: "#111", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
+    }
+  });
+}
+
 function popColor(pop, minLog, maxLog) {
   if (activeMetric === "paidBag") {
     return pop >= 0.5 ? "#c00" : "#ffffff";
@@ -1056,6 +1082,42 @@ async function buildNationalLayer() {
       recomputeAggregates();
       polygonLayer.setStyle(styleFor);
       updateMetricLabels();
+      computePrefAggregates();
+      applyPrefHeatmap();
+    }
+    function computePrefAggregates() {
+      // 都道府県別の集計値 (低ズーム時のヒートマップ用)
+      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag";
+      const prefData = new Map();
+      for (const info of cityGroup.values()) {
+        for (const m of info.members) {
+          const v = popMap.get(m.code5);
+          if (v == null || !isFinite(v) || (v <= 0 && activeMetric !== "paidBag")) continue;
+          const pref = info.prefName;
+          if (!prefData.has(pref)) prefData.set(pref, { sum: 0, count: 0 });
+          const d = prefData.get(pref);
+          d.sum += v; d.count++;
+        }
+      }
+      nationalPrefAggregates = new Map();
+      for (const [pref, d] of prefData) {
+        if (d.count === 0) continue;
+        nationalPrefAggregates.set(pref, isAvg ? d.sum / d.count : d.sum);
+      }
+      // scale (use same fixed scales as munis for consistency)
+      const vals = [...nationalPrefAggregates.values()].filter(v => v > 0);
+      if (activeMetric === "aging") { nationalPrefScale = { minLog: Math.log10(30), maxLog: Math.log10(60) }; }
+      else if (activeMetric === "avgAge") { nationalPrefScale = { minLog: Math.log10(40), maxLog: Math.log10(65) }; }
+      else if (activeMetric === "rainfall") { nationalPrefScale = { minLog: Math.log10(1200), maxLog: Math.log10(2800) }; }
+      else if (activeMetric === "vacancy") { nationalPrefScale = { minLog: Math.log10(10), maxLog: Math.log10(40) }; }
+      else if (vals.length) {
+        vals.sort((a, b) => a - b);
+        const p5 = vals[Math.max(0, Math.floor(vals.length * 0.05))];
+        const p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
+        nationalPrefScale = { minLog: Math.log10(Math.max(p5, 1e-3)), maxLog: Math.log10(Math.max(p95, p5 * 1.01)) };
+      } else {
+        nationalPrefScale = { minLog: 0, maxLog: 1 };
+      }
     }
     function updateMetricLabels() {
       const isAging = activeMetric === "aging";
@@ -1400,7 +1462,12 @@ function onMoveEnd() {
     if (cityLayer && map.hasLayer(cityLayer)) map.removeLayer(cityLayer);
     if (prefLayer) {
       if (!map.hasLayer(prefLayer)) map.addLayer(prefLayer);
-      prefLayer.setStyle({ color: "#5b8db8", weight: 0.7, fillColor: "#cfe2f3", fillOpacity: 0.75 });
+      // ヒートマップ集計があれば反映、なければデフォルト淡色
+      if (nationalPrefAggregates && nationalPrefAggregates.size > 0) {
+        applyPrefHeatmap();
+      } else {
+        prefLayer.setStyle({ color: "#5b8db8", weight: 0.7, fillColor: "#cfe2f3", fillOpacity: 0.75 });
+      }
       setPrefPointerEvents("");
     }
     if (prefLabelLayer) {
