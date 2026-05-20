@@ -239,8 +239,8 @@ const METRICS = {
   density:    { label: "人口密度", unit: "人/km²", loader: () => fetchPopulationDensity(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (人口密度・市区町村単位)" },
   earthquake: { label: "大型地震", unit: "pt", loader: () => fetchEarthquakeCounts(), ready: true,
-    note: "出典: USGS Earthquake API — 震央が含まれる自治体でカウント",
-    footnote: "※M≥5、1900年以降。M7=M5の100倍で加重 / 古い地震は記録漏れの可能性あり / 震央(震源直上)位置のみで、被害が大きかった都市は別(例: 阪神大震災は震央の淡路市が濃く、神戸市は薄い)" },
+    note: "出典: USGS Earthquake API",
+    footnote: "※対象: マグニチュード5以上、1900年以降の地震\n※加重方式: マグニチュードが1上がるごとに10倍の重み(M5=1pt、M6=10pt、M7=100pt、M8=1000pt)\n※集計方法: 震央(震源直上の地表位置)が含まれる自治体に加算。海上の震央は最寄りの陸地に割り当て\n※このマップは震源の位置を示すもので、揺れの被害規模とは別物です。被害の大きかった都市が必ずしも濃く表示されるわけではありません(例: 阪神・淡路大震災では震央のあった淡路市が濃く、被害の大きかった神戸市は薄く出ます)\n※1973年以前の地震はUSGSのカタログ収録が完全ではないため、記録漏れの可能性があります" },
   restaurant: { label: "飲食店", unit: "店/千人", loader: () => fetchRestaurantPerCapita(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (飲食店数)",
     footnote: "※人口千人当たりの飲食店数" },
@@ -1927,7 +1927,11 @@ function updateMetricNote() {
   const foot = document.getElementById("metric-footnote");
   if (foot) {
     if (m.footnote) {
-      foot.textContent = m.footnote;
+      // 改行を <br> に変換して表示
+      const escaped = m.footnote
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+      foot.innerHTML = escaped;
       foot.style.display = "";
     } else {
       foot.textContent = "";
