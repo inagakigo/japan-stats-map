@@ -170,7 +170,7 @@ const RAINFALL_DATA = [["01101",1267],["01102",1267],["01103",1267],["01104",126
 </script>
 <script>
 const PREF_URL = "https://raw.githubusercontent.com/dataofjapan/land/master/japan.topojson";
-const ALL_CITIES_URL = "https://raw.githubusercontent.com/smartnews-smri/japan-topography/main/data/municipality/topojson/s0010/N03-21_210101.json";
+const ALL_CITIES_URL = "https://raw.githubusercontent.com/smartnews-smri/japan-topography/main/data/municipality/topojson/s0001/N03-21_210101.json";
 
 const map = L.map("map", {
   center: [37.5, 137.5],
@@ -244,9 +244,9 @@ const METRICS = {
   restaurant: { label: "飲食店", unit: "店/千人", loader: () => fetchRestaurantPerCapita(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (飲食店数)",
     footnote: "※人口千人当たりの飲食店数" },
-  aging:      { label: "限界集落", unit: "%", loader: () => fetchAgingRate(), ready: true,
+  aging:      { label: "高齢化率", unit: "%", loader: () => fetchAgingRate(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (65歳以上人口割合)",
-    footnote: "※50%以上が「限界自治体」の目安" },
+    footnote: "※市町村平均で50%超は「限界自治体」の目安(本来の限界集落は集落単位の概念)" },
   avgAge:     { label: "平均年齢", unit: "歳", loader: () => fetchAverageAge(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (年齢3区分人口)",
     footnote: "※直接の平均年齢指標がないため推定。0-14歳/15-64歳/65歳以上の各人口に中央値(7歳/40歳/75歳)を乗じて加重平均で算出" },
