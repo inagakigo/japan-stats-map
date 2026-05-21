@@ -825,8 +825,11 @@ async function fetchHeiseiMergers() {
   console.log("[heisei]");
   const prefs = [...PREF_SET];
   const counts = []; // [destPref, destMuni, count]
+  let detailMap = null;
+  let detailAll = null;
 
   for (const pref of prefs) {
+    detailMap = new Map();
     const pageTitle = `${pref}の廃止市町村一覧`;
     const url = `https://ja.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&format=json&prop=wikitext&redirects=1`;
     let json;
@@ -914,9 +917,25 @@ async function fetchHeiseiMergers() {
       const dest = destRaw.replace(/^旧[・･\.]?\s*/, "").replace(/\s*\([^)]*\)$/, "").trim();
       if (!dest || !/(市|町|村)$/.test(dest)) continue;
       muniCount.set(dest, (muniCount.get(dest) || 0) + 1);
+      // 旧自治体名も記録: line 冒頭の最初の [[link]] が source muni
+      const srcM = line.match(/\[\[(?:[^\]|]+\|)?([^\]|]+?(?:市|町|村|区))(?:\|[^\]]+)?\]\]/);
+      if (srcM) {
+        if (!detailMap) detailMap = new Map();
+        if (!detailMap.has(dest)) detailMap.set(dest, []);
+        const src = srcM[1].replace(/\s*\([^)]*\)\s*$/, "");
+        if (src !== dest && !detailMap.get(dest).includes(src)) {
+          detailMap.get(dest).push(src);
+        }
+      }
     }
     for (const [muni, n] of muniCount) {
       counts.push([pref, muni, n]);
+    }
+    if (detailMap) {
+      for (const [dest, srcs] of detailMap) {
+        if (!detailAll) detailAll = {};
+        detailAll[`${pref}|${dest}`] = srcs;
+      }
     }
     console.log(`  [heisei] ${pref}: ${muniCount.size} 自治体が吸収`);
   }
@@ -928,6 +947,10 @@ async function fetchHeiseiMergers() {
   counts.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
   await fs.writeFile(path.join(OUT, "heisei.json"), JSON.stringify(counts));
   console.log(`  → wrote heisei.json`);
+  if (detailAll) {
+    await fs.writeFile(path.join(OUT, "heisei_detail.json"), JSON.stringify(detailAll));
+    console.log(`  → wrote heisei_detail.json (${Object.keys(detailAll).length} destinations)`);
+  }
 }
 
 // ----- 空襲被害件数 (Yahoo!JAPAN 戦争アーカイブ) -----

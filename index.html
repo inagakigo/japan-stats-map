@@ -2360,12 +2360,43 @@ async function selectCity(layer, info) {
     }
   }
 
+  // 平成の大合併: 吸収した旧自治体一覧
+  let heiseiHtml = "";
+  if (activeMetric === "heisei") {
+    const srcs = await loadHeiseiDetail(info.prefName, info.cityName);
+    if (srcs && srcs.length) {
+      heiseiHtml = `<div class="detail-section">
+        <strong>合併で吸収した旧自治体 (${srcs.length}件)</strong>
+        <div style="font-size:13px; color:#333; line-height:1.7; margin-top:4px;">
+          ${srcs.map(s => `・${s}`).join("<br>")}
+        </div>
+      </div>`;
+    }
+  }
+
+  // 王将・山岡家・ラーメンショップ: 店舗数表示
+  let chainHtml = "";
+  if (activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho") {
+    const cacheKey = activeMetric === "baseball" ? "baseball" : activeMetric;
+    const data = metricDataCache.get(cacheKey);
+    const code5 = String(info.cityCode || "").slice(0, 5);
+    const n = data?.get(code5);
+    const label = { ohsho: "京都王将", yamaokaya: "ラーメン山岡家", rasho: "ラーメンショップ" }[activeMetric];
+    if (n && n > 0) {
+      chainHtml = `<div class="detail-section">
+        <strong>${label}の店舗数</strong>${Math.round(n * 10) / 10} 店
+      </div>`;
+    }
+  }
+
   contentEl.innerHTML = `
     <div class="detail-section">
       <strong>人口規模</strong>${popText}${rankHtml}
     </div>
     ${eqHtml}
     ${baseballHtml}
+    ${heiseiHtml}
+    ${chainHtml}
     <div id="wiki-content" class="placeholder">Wikipedia 情報を取得中…</div>
   `;
   await renderWikipediaInfo(info, myToken);
@@ -2380,6 +2411,17 @@ async function loadBaseballPlayers(pref, muni) {
     } catch { _baseballPlayersData = {}; }
   }
   return _baseballPlayersData[`${pref}|${muni}`] || [];
+}
+
+let _heiseiDetailData = null;
+async function loadHeiseiDetail(pref, muni) {
+  if (!_heiseiDetailData) {
+    try {
+      const res = await fetch("data/heisei_detail.json");
+      _heiseiDetailData = res.ok ? await res.json() : {};
+    } catch { _heiseiDetailData = {}; }
+  }
+  return _heiseiDetailData[`${pref}|${muni}`] || [];
 }
 
 async function showDesignatedCityInfo(info, popText) {
