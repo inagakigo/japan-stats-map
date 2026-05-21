@@ -1298,6 +1298,67 @@ async function fetchYamaokaya() {
   console.log(`  → wrote yamaokaya.json`);
 }
 
+// ----- ラーメンショップ (rasho-db.com 集約) -----
+async function fetchRamenShop() {
+  console.log("[rasho]");
+  const munisByPref = await getMunisByPref();
+
+  // sitemap から店舗 URL を取得
+  const smXml = await (await fetch("https://rasho-db.com/post-sitemap.xml", {
+    headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" }
+  })).text();
+  const shopUrls = [...smXml.matchAll(/<loc>([^<]+)<\/loc>/g)]
+    .map(m => m[1])
+    .filter(u => !u.includes("-list") && !u.includes("jin-test") && !u.includes("contact") && /rasho-db\.com\/[^/]+\/[^/]+\/?$/.test(u));
+  console.log(`  [rasho] ${shopUrls.length} shop URLs`);
+
+  const counts = new Map(); // "pref|muni" → count
+  let processed = 0;
+  for (const url of shopUrls) {
+    try {
+      const html = await (await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" } })).text();
+      // pref + 続く地名部分(漢字かなのみ)を捕捉
+      const m = html.match(/([一-龯]{2,4}(?:都|道|府|県))([一-龯々ヵヶ・ー]+)/);
+      if (!m) { processed++; continue; }
+      const pref = m[1];
+      const after = m[2];
+      const prefMunis = munisByPref.get(pref) || [];
+      let muni = null;
+      // 政令市の区 「○○市XX区」
+      const dcRe = /^(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)(.+?区)/;
+      const dcMatch = after.match(dcRe);
+      if (dcMatch) muni = dcMatch[2];
+      else {
+        // pref のあらゆる muni 名で最長マッチ
+        for (const candidate of prefMunis) {
+          if (after.startsWith(candidate)) { muni = candidate; break; }
+        }
+        if (!muni) {
+          const gunMatch = after.match(/^.+?郡(.+?(?:町|村))/);
+          if (gunMatch) muni = gunMatch[1];
+        }
+      }
+      if (!muni) { processed++; continue; }
+      const key = `${pref}|${muni}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    } catch (e) {
+      console.log(`  [rasho] ${url}: ${e.message}`);
+    }
+    processed++;
+  }
+
+  const entries = [];
+  for (const [key, count] of counts) {
+    const [pref, muni] = key.split("|");
+    entries.push([pref, muni, count]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [rasho] total: ${entries.length} entries`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "rasho.json"), JSON.stringify(entries));
+  console.log(`  → wrote rasho.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1342,6 +1403,7 @@ const TASKS = {
   park: fetchNationalParks,
   ohsho: fetchOhsho,
   yamaokaya: fetchYamaokaya,
+  rasho: fetchRamenShop,
 };
 
 const args = process.argv.slice(2);
