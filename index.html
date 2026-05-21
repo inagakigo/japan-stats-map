@@ -1572,6 +1572,17 @@ function onMoveEnd() {
       if (wantLabels && !has) map.addLayer(prefLabelLayer);
       if (!wantLabels && has) map.removeLayer(prefLabelLayer);
     }
+    // 低ズームでもバックグラウンドで市区町村データを読み込む
+    // → buildNationalLayer 内で computePrefAggregates → applyPrefHeatmap が走るので県別ヒートマップが反映される
+    if (!cityLayer && !nationalLoading) {
+      nationalLoading = buildNationalLayer().then(layer => {
+        cityLayer = layer; // 高ズームになったときに onMoveEnd が addLayer する
+        updateColorLegend();
+        preloadAllMetrics();
+      }).catch(e => {
+        console.warn("buildNationalLayer failed:", e.message);
+      });
+    }
     return;
   }
   if (prefLayer) {
