@@ -2732,9 +2732,20 @@ async function preloadAllMetrics() {
 }
 async function switchMetric(key) {
   if (!METRICS[key]) return;
+  const metricChanged = activeMetric !== key;
   activeMetric = key;
   updateMetricNote();
   updateBaseballTeamsVisibility();
+  // 指標切替時、前タブ用に表示してた個別情報をクリア
+  // (球団切替時=同一指標の場合はクリアしない)
+  if (metricChanged) {
+    if (contentEl) {
+      contentEl.innerHTML = "";
+      titleEl.textContent = "";
+      subtitleEl.textContent = "";
+    }
+    if (nationalBackOneLevel) nationalBackOneLevel();
+  }
   console.log(`[switchMetric] ${key} (nationalApplyData=${!!nationalApplyData}, nationalLoading=${!!nationalLoading})`);
   // nationalApplyData がまだなら、ロード完了を待ってから適用 (重要: 低ズーム初期切替時)
   if (!nationalApplyData) {
