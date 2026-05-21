@@ -12,10 +12,11 @@
     flex: 1; outline: none; min-width: 0; min-height: 0;
     background-color: #1f6fb8;
     background-image:
-      radial-gradient(rgba(255,255,255,0.22) 1.2px, transparent 1.5px),
-      radial-gradient(rgba(255,255,255,0.14) 1.2px, transparent 1.5px);
-    background-size: 8px 8px, 8px 8px;
-    background-position: 0 0, 4px 4px;
+      repeating-linear-gradient(135deg,
+        rgba(255,255,255,0.10) 0,
+        rgba(255,255,255,0.10) 1px,
+        transparent 1px,
+        transparent 14px);
   }
   #map:focus, .leaflet-container:focus, .leaflet-interactive:focus { outline: none !important; }
   .leaflet-zoom-box { display: none !important; }
@@ -116,14 +117,12 @@
   /* fill は Leaflet の setStyle (fillColor) で動的に設定 — CSS で書くと SVG fill 属性を上書きしてヒートマップが効かない */
   .pref:hover { fill: #9ec3e0; }
   #baseball-teams {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
+    display: flex; flex-wrap: wrap; gap: 4px;
   }
   .team-btn {
-    font-size: 11px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px;
+    font-size: 11px; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px;
     background: #fff; cursor: pointer; color: #333; text-align: center;
-    white-space: nowrap; overflow: hidden;
+    white-space: nowrap;
   }
   .team-btn:hover { background: #f0f0f0; }
   .team-btn.active { background: #1976d2; color: #fff; border-color: #1976d2; }
