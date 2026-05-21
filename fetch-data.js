@@ -1673,6 +1673,78 @@ async function fetchBrandBeef() {
   console.log(`  → wrote brandbeef.json`);
 }
 
+// ----- プロ野球選手 (Wikidata の野球選手で日本国籍 + 出生地から自治体カウント) -----
+async function fetchBaseball() {
+  console.log("[baseball]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+
+  const query = `
+    SELECT ?p ?pLabel ?bpLabel ?adminLabel WHERE {
+      ?p wdt:P106 wd:Q10871364 .
+      ?p wdt:P27 wd:Q17 .
+      ?p wdt:P19 ?bp .
+      OPTIONAL { ?bp wdt:P131* ?admin . ?admin wdt:P31 wd:Q50337 . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    }
+  `;
+  const sparqlUrl = "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query);
+  const res = await fetch(sparqlUrl, { headers: { "User-Agent": UA, "Accept": "application/sparql-results+json" } });
+  if (!res.ok) throw new Error(`SPARQL HTTP ${res.status}`);
+  const data = await res.json();
+  const bindings = data.results?.bindings || [];
+  console.log(`  [baseball] ${bindings.length} player records`);
+
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  const counts = new Map(); // "pref|muni" → count
+  const playerSeen = new Set(); // 同一人物の重複防止
+  let prefOnlyCount = 0, matched = 0;
+  for (const b of bindings) {
+    const pid = b.p?.value || "";
+    if (playerSeen.has(pid)) continue;
+    playerSeen.add(pid);
+    const bp = (b.bpLabel?.value || "").trim();
+    const pref = (b.adminLabel?.value || "").trim();
+    if (!PREF_SET.has(pref)) continue;
+    // bp が県名と一致 → 出生地が県レベルしかない → スキップ
+    if (bp === pref) { prefOnlyCount++; continue; }
+    const prefMunis = munisByPref.get(pref) || [];
+    // bp が市町村名そのものなら直接マッチ
+    let muni = null;
+    if (prefMunis.includes(bp)) {
+      muni = bp;
+    } else if (DC.has(bp)) {
+      // 政令市親市 (bp="横浜市" など) → muni はそのまま (全区扱い)
+      muni = bp;
+    } else if (/区$/.test(bp)) {
+      // ward only (戸塚区 など) → 県内で一致する ward を探す
+      const wardMatches = prefMunis.filter(m => m === bp);
+      if (wardMatches.length === 1) muni = wardMatches[0];
+      else if (wardMatches.length > 1) muni = wardMatches[0]; // 複数候補は最初
+    } else {
+      // bp に「市町村」を含む場合 (「横浜市戸塚区」とか) → 末尾の muni を抽出
+      const w = bp.match(/[^市区町村]+(?:市|町|村|区)$/);
+      if (w && prefMunis.includes(w[0])) muni = w[0];
+    }
+    if (!muni) continue;
+    const key = `${pref}|${muni}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    matched++;
+  }
+
+  const entries = [];
+  for (const [k, c] of counts) {
+    const [pref, muni] = k.split("|");
+    entries.push([pref, muni, c]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [baseball] matched=${matched}, prefOnlySkipped=${prefOnlyCount}, ${entries.length} muni entries`);
+  console.log(`  [baseball] top 15:`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "baseball.json"), JSON.stringify(entries));
+  console.log(`  → wrote baseball.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1722,6 +1794,7 @@ const TASKS = {
   brandbeef: fetchBrandBeef,
   sake: fetchSake,
   airport: fetchAirports,
+  baseball: fetchBaseball,
 };
 
 const args = process.argv.slice(2);
