@@ -2443,6 +2443,34 @@ function updateColorLegend() {
     const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
+  if (activeMetric === "baseball") {
+    // 選択された球団の色で凡例グラデーション (白 → team color)
+    const team = NPB_TEAMS.find(t => t.key === baseballTeam) || NPB_TEAMS[0];
+    const [r, g, b] = team.color;
+    // popColor と同じカーブ: 最低でも 15% は team color を反映
+    const fade = (pct) => {
+      const ease = 0.15 + (pct / 100) * 0.85;
+      const fr = Math.round(255 - (255 - r) * ease);
+      const fg = Math.round(255 - (255 - g) * ease);
+      const fb = Math.round(255 - (255 - b) * ease);
+      return `rgb(${fr},${fg},${fb})`;
+    };
+    if (bar) bar.style.background = `linear-gradient(to right, ${fade(0)} 0%, ${fade(50)} 50%, ${fade(100)} 100%)`;
+    // min/mid/max は data の値から計算
+    const data = metricDataCache.get(activeMetric);
+    if (data && data.size > 0) {
+      const vals = [...data.values()].filter(v => v > 0);
+      if (vals.length) {
+        const min = Math.min(...vals), max = Math.max(...vals);
+        const midLog = (Math.log10(min) + Math.log10(max)) / 2;
+        const mid = Math.pow(10, midLog);
+        if (minEl) minEl.textContent = `${formatLegendNum(min)} 人`;
+        if (midEl) midEl.textContent = formatLegendNum(mid);
+        if (maxEl) maxEl.textContent = `${formatLegendNum(max)} 人`;
+      }
+    }
+    return;
+  }
   if (activeMetric === "paidBag") {
     if (bar) bar.style.background = "linear-gradient(to right, #ffffff 0%, #ffffff 50%, #c00 50%, #c00 100%)";
     if (minEl) minEl.textContent = "無料";
