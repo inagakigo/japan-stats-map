@@ -2034,8 +2034,229 @@ async function fetchDirector() {
   console.log(`  → wrote director.json + director_names.json`);
 }
 
-// ----- 横綱 (Wikipedia 横綱一覧 → 各記事の出身地) -----
+// ----- 横綱 (日本相撲協会公式) -----
 async function fetchYokozuna() {
+  console.log("[yokozuna]");
+  const munisByPref = await getMunisByPref();
+  const UA = "Mozilla/5.0 japan-stats-map/1.0";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  const res = await fetch("https://www.sumo.or.jp/Yokozuna/yokozuna/", { headers: { "User-Agent": UA } });
+  const html = await res.text();
+
+  // 各横綱のブロック: <a href="/Yokozuna/profile/N/"> ... </a> ... <td class="shushin">{出身地}</td>
+  // 名前は <span class="fntXL">姓</span></rb><rt>...</rt> <rb><span class="fntXL">名</span>
+  const blocks = html.split(/<a href="\/Yokozuna\/profile\/\d+\/">/);
+  const counts = new Map();
+  const samples = new Map();
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i].slice(0, 3000);
+    // 四股名抽出
+    const nameMs = [...block.matchAll(/<span class="fntXL">([^<]+)<\/span>/g)].map(m => m[1].trim().replace(/&nbsp;/g, ""));
+    const name = nameMs.slice(0, 2).join("").trim() || null;
+    // 出身地抽出
+    const orig = block.match(/<td class="shushin"[^>]*>([^<]+)<\/td>/);
+    if (!orig) continue;
+    let raw = orig[1].trim().replace(/[？\s　]/g, "");
+    // 「県名」+「自治体名」
+    const prefRe = /^([一-龯]{2,4}(?:都|道|府|県))(.*)$/;
+    const m = raw.match(prefRe);
+    if (!m) continue;
+    const pref = m[1];
+    if (!PREF_SET.has(pref)) continue;
+    let rest = m[2].replace(/^\s*/, "");
+    const prefMunis = munisByPref.get(pref) || [];
+    // 政令市 + 区
+    let muni = null;
+    const dcRe = /^(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)(.+?区)/;
+    const dcM = rest.match(dcRe);
+    if (dcM) muni = dcM[2];
+    else {
+      for (const cand of [...prefMunis].sort((a, b) => b.length - a.length)) {
+        if (rest.startsWith(cand)) { muni = cand; break; }
+      }
+      if (!muni) {
+        const gunM = rest.match(/^.+?郡(.+?(?:町|村))/);
+        if (gunM) muni = gunM[1];
+      }
+    }
+    if (!muni) continue;
+    const key = `${pref}|${muni}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (!samples.has(key)) samples.set(key, []);
+    if (name && samples.get(key).length < 5) samples.get(key).push(name);
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [yokozuna] ${entries.length} muni entries`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "yokozuna.json"), JSON.stringify(entries));
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "yokozuna_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote yokozuna.json + yokozuna_names.json`);
+}
+
+// ----- 鉱山 (Wikipedia 日本の鉱山の一覧、鉱物種別ごと) -----
+async function fetchMines() {
+  console.log("[mine]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E3%81%AE%E9%89%B1%E5%B1%B1%E3%81%AE%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
+  const json = await (await fetch(url, { headers: { "User-Agent": UA } })).json();
+  const wt = json.parse?.wikitext?.["*"] || "";
+
+  // 県セクションごとに走査
+  const lines = wt.split("\n");
+  let curPref = null;
+  const entries = []; // [pref, muni, mineralType, mineName]
+  for (const line of lines) {
+    const h = line.match(/^={2,}\s*(.+?)\s*={2,}/);
+    if (h) {
+      const name = h[1].trim();
+      if (PREF_SET.has(name)) curPref = name;
+      else if (!/(地方)$/.test(name)) curPref = null; // 「東北地方」などは無視 (前の県を維持しない)
+      continue;
+    }
+    if (!curPref || !line.startsWith("*")) continue;
+    // 鉱山名抽出 (任意)
+    const mineNameM = line.match(/\[\[([^\]|]+?鉱山)(?:\|[^\]]+)?\]\]/);
+    const mineName = mineNameM ? mineNameM[1] : null;
+    // 鉱物リスト (… の後)
+    const minM = line.match(/…([^（(]+?)(?:[（(]|$)/) || line.match(/\.\.\.\s*([^（(]+?)(?:[（(]|$)/);
+    const mins = minM ? minM[1] : "";
+    // 主要鉱物の分類
+    let type = "other";
+    if (/石炭/.test(mins)) type = "coal";
+    else if (/^[\s・]*金/.test(mins) || /^[\s・]*金/.test(mins.split("・")[0] || "")) type = "gold";
+    else if (/^[\s・]*銅/.test(mins.split("・")[0] || "")) type = "copper";
+    else if (/^[\s・]*銀/.test(mins.split("・")[0] || "")) type = "silver";
+    else if (/^[\s・]*鉄/.test(mins.split("・")[0] || "")) type = "iron";
+    else if (/^[\s・]*硫黄/.test(mins.split("・")[0] || "")) type = "sulfur";
+    else if (/金/.test(mins)) type = "gold";
+    else if (/銅/.test(mins)) type = "copper";
+    else if (/鉄/.test(mins)) type = "iron";
+    // 所在地 (-以降)
+    const dashIdx = line.lastIndexOf("-");
+    if (dashIdx < 0) continue;
+    const loc = line.slice(dashIdx + 1).replace(/\s+/g, "");
+    // muni 抽出: prefMunis に最長マッチ
+    const prefMunis = munisByPref.get(curPref) || [];
+    let muni = null;
+    for (const cand of [...prefMunis].sort((a, b) => b.length - a.length)) {
+      if (loc.includes(cand)) { muni = cand; break; }
+    }
+    if (!muni) continue;
+    entries.push([curPref, muni, type, mineName || ""]);
+  }
+
+  // 自治体ごとの集計: 各 type の count
+  const aggMap = new Map(); // "pref|muni" → { type: { count, names: [] }, ... }
+  for (const [pref, muni, type, name] of entries) {
+    const key = `${pref}|${muni}`;
+    if (!aggMap.has(key)) aggMap.set(key, {});
+    const a = aggMap.get(key);
+    if (!a[type]) a[type] = { count: 0, names: [] };
+    a[type].count++;
+    if (name && a[type].names.length < 5) a[type].names.push(name);
+  }
+
+  // 出力形式: [[pref, muni, dominantType, totalCount, breakdown], ...]
+  const out = [];
+  for (const [k, types] of aggMap) {
+    const [pref, muni] = k.split("|");
+    let dominant = null, maxCount = 0, total = 0;
+    for (const [t, info] of Object.entries(types)) {
+      total += info.count;
+      if (info.count > maxCount) { maxCount = info.count; dominant = t; }
+    }
+    out.push([pref, muni, dominant, total, types]);
+  }
+  out.sort((a, b) => b[3] - a[3]);
+  console.log(`  [mine] ${out.length} muni entries`);
+  out.slice(0, 15).forEach(([p, m, t, c]) => console.log(`    ${p} ${m}: ${t} (${c}件)`));
+  await fs.writeFile(path.join(OUT, "mine.json"), JSON.stringify(out));
+  console.log(`  → wrote mine.json`);
+}
+
+// ----- Jリーグクラブの本拠地 -----
+async function fetchJLeague() {
+  console.log("[jleague]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  // カテゴリからクラブ一覧
+  const catUrl = "https://ja.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:J%E3%83%AA%E3%83%BC%E3%82%B0%E3%82%AF%E3%83%A9%E3%83%96&cmlimit=200&cmtype=page&format=json";
+  const catJson = await (await fetch(catUrl, { headers: { "User-Agent": UA } })).json();
+  const titles = (catJson.query?.categorymembers || [])
+    .map(x => x.title)
+    .filter(t => !/(成績一覧|アンダー)/.test(t));
+  console.log(`  [jleague] ${titles.length} club articles`);
+
+  const counts = new Map();
+  const samples = new Map();
+  for (let i = 0; i < titles.length; i += 20) {
+    const batch = titles.slice(i, i + 20);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    let j;
+    try {
+      const res = await fetch(u, { headers: { "User-Agent": UA } });
+      j = JSON.parse(await res.text());
+    } catch (e) { console.log(`  [jleague] batch ${i}: ${e.message}`); continue; }
+    const pages = j.query?.pages || [];
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      // ホームタウン field の値を抽出
+      let block = "";
+      for (const f of ["ホームタウン", "本拠地", "活動の本拠"]) {
+        const re = new RegExp(`\\|\\s*${f}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\|\\s*\\w|\\n\\}\\})`);
+        const m = w.match(re);
+        if (m && m[1].trim()) { block += "\n" + m[1]; }
+      }
+      // 記事冒頭も含めて補完
+      if (!block) block = w.slice(0, 2000);
+      // [[県]] と [[市町村]] を抽出
+      const linkRe = /\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g;
+      let curPref = null;
+      const munisFound = new Set();
+      let mm;
+      while ((mm = linkRe.exec(block))) {
+        const name = mm[1].trim().replace(/\s*\([^)]*\)\s*$/, "");
+        if (PREF_SET.has(name)) {
+          curPref = name;
+        } else if (/(市|町|村)$/.test(name) && curPref) {
+          const prefMunis = munisByPref.get(curPref) || [];
+          if (prefMunis.includes(name) || DC.has(name)) {
+            munisFound.add(`${curPref}|${name}`);
+          }
+        }
+      }
+      if (munisFound.size === 0) continue;
+      // クラブ名 (記事タイトル)
+      for (const key of munisFound) {
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if (!samples.has(key)) samples.set(key, []);
+        if (samples.get(key).length < 5 && !samples.get(key).includes(p.title)) {
+          samples.get(key).push(p.title);
+        }
+      }
+    }
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [jleague] ${entries.length} muni entries`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "jleague.json"), JSON.stringify(entries));
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "jleague_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote jleague.json + jleague_names.json`);
+}
+
+// (旧版) Wikipedia 横綱一覧 + 各記事 — 公式サイト未対応時のフォールバック
+async function fetchYokozunaWiki() {
   console.log("[yokozuna]");
   const munisByPref = await getMunisByPref();
   const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
@@ -2230,6 +2451,8 @@ const TASKS = {
   thermal: fetchThermal,
   director: fetchDirector,
   yokozuna: fetchYokozuna,
+  jleague: fetchJLeague,
+  mine: fetchMines,
 };
 
 const args = process.argv.slice(2);

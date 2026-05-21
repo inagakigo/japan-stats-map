@@ -322,8 +322,14 @@ const METRICS = {
     note: "出典: Wikidata (P106=映画監督, P19=出生地, 日本国籍) — 出生地別の映画監督数",
     footnote: "※大阪市51・横浜市43・京都市43・神戸市33・名古屋市22・広島市19・福岡市18・仙台市18 などが上位" },
   yokozuna:   { label: "横綱", unit: "代", loader: () => fetchYokozunaData(), ready: true,
-    note: "出典: Wikipedia「横綱一覧」 + 各横綱記事の Infobox 出身地 — 自治体別の横綱輩出数",
-    footnote: "※歴代73名の横綱のうち、出身自治体まで特定できた者を集計。富山市2、市川市2、福島町2 など" },
+    note: "出典: 日本相撲協会 公式 (sumo.or.jp/Yokozuna/yokozuna/) — 自治体別の横綱輩出数",
+    footnote: "※歴代横綱の出身地を協会公表データから集計" },
+  jleague:    { label: "Jリーグ", unit: "クラブ", loader: () => fetchJLeagueData(), ready: true,
+    note: "出典: Wikipedia「Jリーグクラブ」カテゴリ各記事のホームタウン — クラブの本拠地自治体に着色",
+    footnote: "※J1/J2/J3 のクラブ。1クラブが複数自治体をホームタウンに指定している場合は全てに着色" },
+  mine:       { label: "鉱山", unit: "件", loader: () => fetchMineData(), ready: true,
+    note: "出典: Wikipedia「日本の鉱山の一覧」 — 主要鉱物別に色分け (金=黄, 銅=橙, 銀=灰, 鉄=茶, 石炭=黒, 硫黄=黄緑, その他=グレー)",
+    footnote: "※閉山を含む歴代の鉱山。1自治体に複数の鉱山がある場合は最多鉱物で色決定。濃さは件数" },
   dam:        { label: "大規模ダム", unit: "", loader: () => fetchDamData(), ready: true,
     note: "出典: Wikipedia「日本のダム一覧 (堤高順)」 + 各ダム記事の Infobox — シアン=堤高100m以上のダム所在 / 白=非該当",
     footnote: "※堤高100m以上の大規模ダム(51基)の所在自治体。ダムが複数自治体にまたがる場合は両方マーク" },
@@ -605,6 +611,32 @@ async function fetchDirectorData() {
 }
 async function fetchYokozunaData() {
   return fetchChainStoreData("yokozuna", "data/yokozuna.json");
+}
+async function fetchJLeagueData() {
+  return fetchChainStoreData("jleague", "data/jleague.json");
+}
+let _mineTypeByCode = new Map();
+let popColorCurrentCode = "";
+async function fetchMineData() {
+  if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
+  const res = await fetch("data/mine.json");
+  if (!res.ok) throw new Error(`mine HTTP ${res.status}`);
+  const entries = await res.json();
+  const map = new Map();
+  _mineTypeByCode = new Map();
+  for (const [pref, muni, type, count] of entries) {
+    const codes = nationalNameLookup(pref, muni);
+    if (codes && codes.length) {
+      for (const c of codes) {
+        const prev = map.get(c) || 0;
+        map.set(c, prev + count / codes.length);
+        if (!_mineTypeByCode.has(c)) _mineTypeByCode.set(c, type);
+      }
+    }
+  }
+  for (const [k, v] of map) map.set(k, Math.round(v * 10) / 10);
+  console.log(`[mine] ${map.size} muni`);
+  return map;
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -1185,7 +1217,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1259,6 +1291,33 @@ function popColor(pop, minLog, maxLog) {
   }
   if (activeMetric === "yokozuna") {
     if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "jleague") {
+    if (!pop || pop <= 0) return "#ffffff";
+    return pop >= 0.5 ? "#147a3e" : "#ffffff"; // 緑
+  }
+  if (activeMetric === "mine") {
+    if (!pop || pop <= 0) return "#ffffff";
+    // 主要鉱物の色を取得
+    const code = popColorCurrentCode; // 注意: popColor は code を受け取らないので、styleFor 側で渡す必要あり
+    // フォールバック: ここでは値の濃淡だけで描画
+    const colors = {
+      gold:   [212, 160,   0],
+      copper: [184, 115,  51],
+      silver: [170, 170, 175],
+      iron:   [120,  75,  50],
+      coal:   [ 40,  40,  40],
+      sulfur: [220, 200,  70],
+      other:  [140, 140, 140]
+    };
+    const type = _mineTypeByCode.get(popColorCurrentCode) || "other";
+    const base = colors[type] || colors.other;
+    // 濃淡: count 1~20+
+    const ease = Math.min(1, 0.35 + Math.log10(pop + 1) / Math.log10(30));
+    const fr = Math.round(255 - (255 - base[0]) * ease);
+    const fg = Math.round(255 - (255 - base[1]) * ease);
+    const fb = Math.round(255 - (255 - base[2]) * ease);
+    return `rgb(${fr},${fg},${fb})`;
   }
   if (activeMetric === "airport") {
     // 空港あり=シアン緑 / なし=白
@@ -1456,12 +1515,15 @@ async function buildNationalLayer() {
     const styleFor = (feature) => {
       const k = mergeKeyOf(feature.properties);
       const info = cityGroup.get(k);
+      const code5 = String(feature.properties.N03_007 || "").slice(0, 5);
       let pop;
       if (info && info.isDesignated && !expandedSet.has(k)) pop = info.aggregatePop;
-      else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
+      else pop = popMap.get(code5);
+      // 鉱山 / その他で code5 を popColor に渡せるよう一時保存
+      popColorCurrentCode = code5;
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2536,10 +2598,10 @@ async function showDesignatedCityInfo(info, popText) {
 const METRIC_CATEGORIES = [
   { name: "人口動態",       keys: ["population", "density", "aging", "avgAge", "vacancy"] },
   { name: "自然・地形",     keys: ["forest", "rainfall", "hyakumeizan", "park", "water100"] },
-  { name: "インフラ",       keys: ["nuclear", "thermal", "dam", "military", "airport", "paidBag"] },
+  { name: "インフラ",       keys: ["nuclear", "thermal", "dam", "mine", "military", "airport", "paidBag"] },
   { name: "歴史・出来事",   keys: ["earthquake", "airraid", "heisei"] },
   { name: "文化・産業",     keys: ["restaurant", "sake", "yakimono", "ohsho", "yamaokaya", "rasho"] },
-  { name: "スポーツ",       keys: ["baseball", "yokozuna"] },
+  { name: "スポーツ",       keys: ["baseball", "yokozuna", "jleague"] },
   { name: "文化人",         keys: ["director"] },
   { name: "安全・事故",     keys: ["traffic", "bear"] }
 ];
@@ -2695,7 +2757,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "thermal", "director", "yokozuna", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "thermal", "director", "yokozuna", "jleague", "mine", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "baseball") {
