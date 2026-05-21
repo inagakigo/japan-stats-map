@@ -1690,19 +1690,26 @@ async function fetchBrandBeef() {
 }
 
 // ----- プロ野球選手 (Wikidata の野球選手で日本国籍 + 出生地から自治体カウント) -----
+// 各球団の Wikidata Q-ID と、合算する前身球団の Q-ID 群
+// Wikidata では多くの改名球団が単一の Q-ID に統合されているが、
+// 別 Q-ID として存在する前身は明示的に UNION する必要がある
 const NPB_TEAMS = [
-  { key: "giants",     qid: "Q1197407", name: "読売ジャイアンツ" },
-  { key: "tigers",     qid: "Q127635",  name: "阪神タイガース" },
-  { key: "dragons",    qid: "Q209961",  name: "中日ドラゴンズ" },
-  { key: "carp",       qid: "Q247577",  name: "広島東洋カープ" },
-  { key: "swallows",   qid: "Q1324392", name: "東京ヤクルトスワローズ" },
-  { key: "baystars",   qid: "Q1194023", name: "横浜DeNAベイスターズ" },
-  { key: "hawks",      qid: "Q129164",  name: "福岡ソフトバンクホークス" },
-  { key: "fighters",   qid: "Q974277",  name: "北海道日本ハムファイターズ" },
-  { key: "eagles",     qid: "Q1375077", name: "東北楽天ゴールデンイーグルス" },
-  { key: "marines",    qid: "Q484151",  name: "千葉ロッテマリーンズ" },
-  { key: "buffaloes",  qid: "Q1328038", name: "オリックス・バファローズ" },
-  { key: "lions",      qid: "Q325819",  name: "埼玉西武ライオンズ" }
+  { key: "giants",     qids: ["Q1197407"], name: "読売ジャイアンツ" },
+  { key: "tigers",     qids: ["Q127635"],  name: "阪神タイガース" },
+  { key: "dragons",    qids: ["Q209961"],  name: "中日ドラゴンズ" },
+  { key: "carp",       qids: ["Q247577"],  name: "広島東洋カープ" },
+  { key: "swallows",   qids: ["Q1324392"], name: "東京ヤクルトスワローズ" },
+  { key: "baystars",   qids: ["Q1194023"], name: "横浜DeNAベイスターズ" },
+  { key: "hawks",      qids: ["Q129164"],  name: "福岡ソフトバンクホークス" },
+  // 北海道日本ハムファイターズ + 東映フライヤーズ + 日拓ホームフライヤーズ
+  { key: "fighters",   qids: ["Q974277", "Q137739764", "Q137739775"], name: "北海道日本ハムファイターズ" },
+  { key: "eagles",     qids: ["Q1375077"], name: "東北楽天ゴールデンイーグルス" },
+  // 千葉ロッテマリーンズ + 大映ユニオンズ
+  { key: "marines",    qids: ["Q484151", "Q3844332"], name: "千葉ロッテマリーンズ" },
+  // オリックス・バファローズ + 阪急ブレーブス + オリックス・ブルーウェーブ + 大阪近鉄バファローズ
+  { key: "buffaloes",  qids: ["Q1328038", "Q3356415", "Q135670822", "Q1069384"], name: "オリックス・バファローズ" },
+  // 埼玉西武ライオンズ + 太平洋クラブライオンズ
+  { key: "lions",      qids: ["Q325819", "Q137739843"], name: "埼玉西武ライオンズ" }
 ];
 
 async function fetchBaseballTeams() {
@@ -1725,9 +1732,12 @@ async function fetchBaseballTeams() {
   };
 
   for (const team of NPB_TEAMS) {
+    // qids 配列を VALUES で UNION
+    const valuesClause = team.qids.map(q => `wd:${q}`).join(" ");
     const query = `
-      SELECT ?p ?bpLabel ?adminLabel WHERE {
-        ?p wdt:P54 wd:${team.qid} .
+      SELECT DISTINCT ?p ?bpLabel ?adminLabel WHERE {
+        VALUES ?team { ${valuesClause} }
+        ?p wdt:P54 ?team .
         ?p wdt:P27 wd:Q17 .
         ?p wdt:P19 ?bp .
         OPTIONAL { ?bp wdt:P131* ?admin . ?admin wdt:P31 wd:Q50337 . }
