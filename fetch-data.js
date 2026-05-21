@@ -2239,8 +2239,111 @@ async function fetchReligion() {
   console.log(`  → wrote religion.json + religion_names.json`);
 }
 
-// ----- Jリーグクラブの本拠地 -----
+// ----- Jリーグクラブの本拠地 (スタジアム所在地ピンポイント) -----
 async function fetchJLeague() {
+  console.log("[jleague]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  // 1. クラブ一覧
+  const catUrl = "https://ja.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:J%E3%83%AA%E3%83%BC%E3%82%B0%E3%82%AF%E3%83%A9%E3%83%96&cmlimit=200&cmtype=page&format=json";
+  const catJson = await (await fetch(catUrl, { headers: { "User-Agent": UA } })).json();
+  const titles = (catJson.query?.categorymembers || [])
+    .map(x => x.title)
+    .filter(t => !/(成績一覧|アンダー)/.test(t));
+  console.log(`  [jleague] ${titles.length} club articles`);
+
+  // 2. クラブ→スタジアム名を集める
+  const clubStadium = []; // { club, stadium }
+  for (let i = 0; i < titles.length; i += 20) {
+    const batch = titles.slice(i, i + 20);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    const j = await (await fetch(u, { headers: { "User-Agent": UA } })).json();
+    const pages = j.query?.pages || [];
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      // スタジアム field 内のリンクを全部取り、File:/ファイル: を除外して最初のものを採用
+      const stadBlockM = w.match(/\|\s*スタジアム\s*=\s*([\s\S]*?)(?=\n\s*\|\s*\w|\n\}\})/);
+      let stadium = null;
+      if (stadBlockM) {
+        const links = [...stadBlockM[1].matchAll(/\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g)];
+        for (const lm of links) {
+          const t = lm[1].trim();
+          if (/^(File|ファイル|Image|画像):/i.test(t)) continue;
+          stadium = t;
+          break;
+        }
+      }
+      if (stadium) clubStadium.push({ club: p.title, stadium });
+    }
+  }
+  console.log(`  [jleague] ${clubStadium.length} stadiums extracted`);
+
+  // 3. スタジアム記事から所在地 (muni) を抽出
+  const stadiumTitles = [...new Set(clubStadium.map(c => c.stadium))];
+  const stadiumMuni = new Map(); // stadiumName → "pref|muni"
+  for (let i = 0; i < stadiumTitles.length; i += 20) {
+    const batch = stadiumTitles.slice(i, i + 20);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    const j = await (await fetch(u, { headers: { "User-Agent": UA } })).json();
+    const pages = j.query?.pages || [];
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      // 所在地 field
+      let block = "";
+      for (const f of ["所在地", "住所"]) {
+        const re = new RegExp(`\\|\\s*${f}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\|\\s*\\w|\\n\\}\\})`);
+        const m = w.match(re);
+        if (m && m[1].trim()) { block = m[1]; break; }
+      }
+      if (!block) block = w.slice(0, 2000);
+      // [[県]][[市町村]] パターン
+      const re = /\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]\s*(?:\[\[[^\]|]+?郡(?:\|[^\]]+)?\]\])?\s*\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/;
+      const m2 = block.match(re);
+      if (!m2) continue;
+      const pref = m2[1].replace(/\s*\([^)]*\)\s*$/, "");
+      const muniRaw = m2[2].replace(/\s*\([^)]*\)\s*$/, "");
+      if (!PREF_SET.has(pref)) continue;
+      const prefMunis = munisByPref.get(pref) || [];
+      let muni = muniRaw;
+      if (DC.has(muniRaw)) {
+        const after = block.slice(block.indexOf(m2[0]) + m2[0].length, block.indexOf(m2[0]) + m2[0].length + 60);
+        const wm = after.match(/^\s*\[\[(?:[^\]|]+?\|)?([^\]|]+?区)\]\]/);
+        if (wm) muni = wm[1];
+      }
+      if (prefMunis.includes(muni) || DC.has(muni)) {
+        stadiumMuni.set(p.title, `${pref}|${muni}`);
+      }
+    }
+  }
+  console.log(`  [jleague] ${stadiumMuni.size} stadiums resolved to muni`);
+
+  // 4. 集計
+  const counts = new Map();
+  const samples = new Map();
+  for (const { club, stadium } of clubStadium) {
+    const key = stadiumMuni.get(stadium);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (!samples.has(key)) samples.set(key, []);
+    if (!samples.get(key).includes(club)) samples.get(key).push(club);
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [jleague] ${entries.length} muni entries`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "jleague.json"), JSON.stringify(entries));
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "jleague_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote jleague.json + jleague_names.json`);
+}
+
+// (旧版) ホームタウン全自治体 — フォールバック
+async function fetchJLeagueOld() {
   console.log("[jleague]");
   const munisByPref = await getMunisByPref();
   const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";

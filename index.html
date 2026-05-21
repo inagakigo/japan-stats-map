@@ -2507,6 +2507,29 @@ async function selectCity(layer, info) {
     }
   }
 
+  // 映画監督・横綱・Jリーグ・宗教: 自治体の代表名
+  let namesHtml = "";
+  const namesConfig = {
+    director: { file: "data/director_names.json", title: "この自治体出身の主な映画監督", linkBase: "https://ja.wikipedia.org/wiki/" },
+    yokozuna: { file: "data/yokozuna_names.json", title: "この自治体出身の横綱", linkBase: "https://ja.wikipedia.org/wiki/" },
+    jleague:  { file: "data/jleague_names.json", title: "本拠地のJリーグクラブ", linkBase: "https://ja.wikipedia.org/wiki/" },
+    religion: { file: "data/religion_names.json", title: "本部のある宗教団体", linkBase: "https://ja.wikipedia.org/wiki/" }
+  };
+  if (namesConfig[activeMetric]) {
+    const cfg = namesConfig[activeMetric];
+    const dict = await loadNamesData(cfg.file);
+    const names = dict[`${info.prefName}|${info.cityName}`] || [];
+    if (names.length) {
+      const top5 = names.slice(0, 5);
+      namesHtml = `<div class="detail-section">
+        <strong>${cfg.title}</strong>
+        <div style="font-size:13px; color:#333; line-height:1.7; margin-top:4px;">
+          ${top5.map(n => `・<a href="${cfg.linkBase}${encodeURIComponent(n)}" target="_blank" rel="noopener" style="color:#1976d2; text-decoration:none;">${n}</a>`).join("<br>")}
+        </div>
+      </div>`;
+    }
+  }
+
   // 平成の大合併: 吸収した旧自治体一覧
   let heiseiHtml = "";
   if (activeMetric === "heisei") {
@@ -2542,6 +2565,7 @@ async function selectCity(layer, info) {
     </div>
     ${eqHtml}
     ${baseballHtml}
+    ${namesHtml}
     ${heiseiHtml}
     ${chainHtml}
     <div id="wiki-content" class="placeholder">Wikipedia 情報を取得中…</div>
@@ -2558,6 +2582,16 @@ async function loadBaseballPlayers(pref, muni) {
     } catch { _baseballPlayersData = {}; }
   }
   return _baseballPlayersData[`${pref}|${muni}`] || [];
+}
+const _namesCache = {};
+async function loadNamesData(file) {
+  if (!_namesCache[file]) {
+    try {
+      const res = await fetch(file);
+      _namesCache[file] = res.ok ? await res.json() : {};
+    } catch { _namesCache[file] = {}; }
+  }
+  return _namesCache[file];
 }
 
 let _heiseiDetailData = null;
