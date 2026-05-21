@@ -321,7 +321,10 @@ const METRICS = {
     footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" },
   brandbeef:  { label: "ブランド牛", unit: "銘柄", loader: () => fetchBrandBeefData(), ready: true,
     note: "出典: Wikipedia「日本のブランド牛一覧」 — 県別のブランド牛銘柄数",
-    footnote: "※県単位の指標。県内の全自治体に同じ値を表示。北海道21・岩手8・栃木8・兵庫8・茨城7・秋田6 などが上位" }
+    footnote: "※県単位の指標。県内の全自治体に同じ値を表示。北海道21・岩手8・栃木8・兵庫8・茨城7・秋田6 などが上位" },
+  sake:       { label: "日本酒", unit: "蔵", loader: () => fetchSakeData(), ready: true,
+    note: "出典: Wikipedia「日本酒メーカー一覧」 — 県別の蔵元数。シアン系のグラデーション",
+    footnote: "※県単位の指標。兵庫70・愛知41・京都38・石川33・新潟32・奈良32・滋賀28 などが上位" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -532,6 +535,11 @@ async function fetchBrandBeefData() {
   if (!res.ok) throw new Error(`brandbeef HTTP ${res.status}`);
   const entries = await res.json();
   return new Map(entries);
+}
+async function fetchSakeData() {
+  const res = await fetch("data/sake.json");
+  if (!res.ok) throw new Error(`sake HTTP ${res.status}`);
+  return new Map(await res.json());
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -957,6 +965,14 @@ const METRIC_PALETTES = {
     [0.80, [140,  35,  40]],
     [1.00, [ 85,  15,  25]]
   ],
+  sake: [
+    [0.00, [225, 245, 248]],
+    [0.20, [180, 225, 235]],
+    [0.40, [120, 200, 220]],
+    [0.60, [ 60, 165, 195]],
+    [0.80, [ 25, 115, 155]],
+    [1.00, [ 15,  60, 105]]
+  ],
   airraid: [
     [0.00, [255, 245, 240]],
     [0.10, [253, 220, 210]],
@@ -1217,7 +1233,7 @@ async function buildNationalLayer() {
     }
     function recomputeAggregates() {
       // 平均で集計したい指標 (密度系・1人当たり系など加法的でないもの)
-      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "brandbeef";
+      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "brandbeef" || activeMetric === "sake";
       const allowZero = activeMetric === "paidBag";
       for (const info of cityGroup.values()) {
         let total = 0, any = false, count = 0;
@@ -1311,7 +1327,7 @@ async function buildNationalLayer() {
     }
     function computePrefAggregates() {
       // 都道府県別の集計値 (低ズーム時のヒートマップ用)
-      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag" || activeMetric === "brandbeef";
+      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag" || activeMetric === "brandbeef" || activeMetric === "sake";
       const prefData = new Map();
       for (const info of cityGroup.values()) {
         for (const m of info.members) {

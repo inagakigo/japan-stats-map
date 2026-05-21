@@ -1412,6 +1412,53 @@ async function fetchYakimono() {
   console.log(`  → wrote yakimono.json`);
 }
 
+// ----- 日本酒の蔵元 (Wikipedia「日本酒メーカー一覧」より県別カウント) -----
+async function fetchSake() {
+  console.log("[sake]");
+  const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E9%85%92%E3%83%A1%E3%83%BC%E3%82%AB%E3%83%BC%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
+  const json = await (await fetch(url)).json();
+  const wt = json.parse?.wikitext?.["*"] || "";
+  if (!wt) throw new Error("sake wikitext empty");
+  const lines = wt.split(/\n/);
+  let curPref = null;
+  const prefCounts = {};
+  for (const line of lines) {
+    const h = line.match(/^={2,}\s*(.+?)\s*={2,}/);
+    if (h) {
+      const name = h[1].trim();
+      if (PREF_SET.has(name)) { curPref = name; prefCounts[name] = 0; }
+      else curPref = null;
+      continue;
+    }
+    if (curPref && /^\*\s*\[/.test(line)) prefCounts[curPref]++;
+  }
+
+  // 各県の自治体に同じ値を割当 (brandbeef と同じ方式)
+  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
+  const topo = JSON.parse(txt);
+  const objKey = Object.keys(topo.objects)[0];
+  const geoms = topo.objects[objKey].geometries || [];
+  const prefToCodes = new Map();
+  for (const g of geoms) {
+    const props = g.properties || {};
+    const pref = props.N03_001;
+    const code5 = String(props.N03_007 || "").slice(0, 5);
+    if (!pref || !code5) continue;
+    if (!prefToCodes.has(pref)) prefToCodes.set(pref, new Set());
+    prefToCodes.get(pref).add(code5);
+  }
+  const entries = [];
+  for (const [pref, count] of Object.entries(prefCounts)) {
+    const codes = prefToCodes.get(pref);
+    if (!codes) continue;
+    for (const c of codes) entries.push([c, count]);
+  }
+  console.log(`  [sake] ${Object.keys(prefCounts).length} prefs, ${entries.length} muni entries`);
+  Object.entries(prefCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).forEach(([p, c]) => console.log(`    ${p}: ${c}`));
+  await fs.writeFile(path.join(OUT, "sake.json"), JSON.stringify(entries));
+  console.log(`  → wrote sake.json`);
+}
+
 // ----- ブランド牛 (Wikipedia「日本のブランド牛一覧」より県別カウント) -----
 // 県単位の指標なので、その県に属する全自治体に同じ値を割当 (popMap の pref 2 桁 fallback を利用)
 async function fetchBrandBeef() {
@@ -1512,6 +1559,7 @@ const TASKS = {
   rasho: fetchRamenShop,
   yakimono: fetchYakimono,
   brandbeef: fetchBrandBeef,
+  sake: fetchSake,
 };
 
 const args = process.argv.slice(2);
