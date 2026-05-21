@@ -107,6 +107,13 @@
   .pref { stroke: #5b8db8; stroke-width: 0.7; cursor: pointer; transition: fill 0.15s; }
   /* fill は Leaflet の setStyle (fillColor) で動的に設定 — CSS で書くと SVG fill 属性を上書きしてヒートマップが効かない */
   .pref:hover { fill: #9ec3e0; }
+  #baseball-teams { display: flex; flex-wrap: wrap; gap: 4px; }
+  .team-btn {
+    font-size: 11px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+    background: #fff; cursor: pointer; color: #333;
+  }
+  .team-btn:hover { background: #f0f0f0; }
+  .team-btn.active { background: #1976d2; color: #fff; border-color: #1976d2; }
   .pref-border {
     fill: transparent; stroke: #0d2238; stroke-width: 4;
     stroke-linejoin: round; stroke-linecap: round;
@@ -156,6 +163,7 @@
       <select id="metric-select"></select>
     </label>
     <div id="metric-note" class="metric-note"></div>
+    <div id="baseball-teams" style="display:none; margin: 6px 0 12px;"></div>
     <div class="color-legend">
       <div class="legend-bar" id="legend-bar"></div>
       <div class="legend-labels">
@@ -330,6 +338,23 @@ const METRICS = {
     footnote: "※NPB/MLB/独立リーグ含む 6,000+ 名の野球選手の出生地ベース。大阪市71・横浜市63・神戸市40・熊本市39・名古屋市37・和歌山市36 などが上位" }
 };
 let activeMetric = "population";
+// プロ野球: 「全チーム」or 12 球団のいずれか
+const NPB_TEAMS = [
+  { key: "all",       name: "全チーム", color: [60, 160, 75] },     // 緑
+  { key: "giants",    name: "巨人",     color: [255, 110, 0] },     // オレンジ
+  { key: "tigers",    name: "阪神",     color: [240, 200, 60] },    // 黄
+  { key: "dragons",   name: "中日",     color: [10, 60, 145] },     // 紺
+  { key: "carp",      name: "広島",     color: [215, 25, 30] },     // 赤
+  { key: "swallows",  name: "ヤクルト", color: [110, 60, 145] },    // 紫
+  { key: "baystars",  name: "DeNA",     color: [0, 130, 200] },     // 青
+  { key: "hawks",     name: "ソフトB",  color: [245, 200, 30] },    // 金
+  { key: "fighters",  name: "日ハム",   color: [40, 80, 175] },     // 青系
+  { key: "eagles",    name: "楽天",     color: [150, 25, 60] },     // クリムゾン
+  { key: "marines",   name: "ロッテ",   color: [40, 40, 50] },      // 黒
+  { key: "buffaloes", name: "オリックス", color: [80, 60, 35] },    // ブロンズ
+  { key: "lions",     name: "西武",     color: [0, 60, 170] }       // 青
+];
+let baseballTeam = "all";
 const metricDataCache = new Map();
 const metricNoteEl = () => document.getElementById("metric-note");
 
@@ -539,7 +564,9 @@ async function fetchAirportData() {
   return loadPairListAsBinaryMap("airport", "data/airport.json");
 }
 async function fetchBaseballData() {
-  return fetchChainStoreData("baseball", "data/baseball.json");
+  // baseballTeam に応じてファイルを切替
+  const file = baseballTeam === "all" ? "data/baseball.json" : `data/baseball_${baseballTeam}.json`;
+  return fetchChainStoreData(`baseball-${baseballTeam}`, file);
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -1127,6 +1154,17 @@ function popColor(pop, minLog, maxLog) {
   if (activeMetric === "baseball") {
     // 該当なし → 白
     if (!pop || pop <= 0) return "#ffffff";
+    // 球団色のグラデーション
+    const team = NPB_TEAMS.find(t => t.key === baseballTeam) || NPB_TEAMS[0];
+    const [r, g, b] = team.color;
+    // 値を正規化 (log scale)
+    const t = Math.min(1, Math.max(0, (Math.log10(pop) - minLog) / (maxLog - minLog)));
+    // 淡 → 濃 (白から team.color へ)
+    const ease = 0.15 + t * 0.85; // 最低でも 15% は team color を反映
+    const fr = Math.round(255 - (255 - r) * ease);
+    const fg = Math.round(255 - (255 - g) * ease);
+    const fb = Math.round(255 - (255 - b) * ease);
+    return `rgb(${fr},${fg},${fb})`;
   }
   if (activeMetric === "bear") {
     // 0 / 未収集自治体は白
@@ -2274,6 +2312,40 @@ function initMetricSelect() {
   sel.value = activeMetric;
   updateMetricNote();
   sel.addEventListener("change", () => switchMetric(sel.value));
+  buildBaseballTeamSelector();
+}
+
+function buildBaseballTeamSelector() {
+  const el = document.getElementById("baseball-teams");
+  if (!el) return;
+  el.innerHTML = "";
+  for (const t of NPB_TEAMS) {
+    const btn = document.createElement("button");
+    btn.className = "team-btn" + (t.key === baseballTeam ? " active" : "");
+    btn.textContent = t.name;
+    btn.dataset.key = t.key;
+    const [r, g, b] = t.color;
+    btn.style.borderColor = `rgb(${r},${g},${b})`;
+    if (t.key === baseballTeam) {
+      btn.style.background = `rgb(${r},${g},${b})`;
+      btn.style.color = "#fff";
+    }
+    btn.addEventListener("click", () => {
+      baseballTeam = t.key;
+      buildBaseballTeamSelector(); // 再描画
+      // 球団切替時は cache 破棄して再読み込み
+      const cacheKey = "baseball";
+      metricDataCache.delete(cacheKey);
+      switchMetric("baseball");
+    });
+    el.appendChild(btn);
+  }
+}
+
+function updateBaseballTeamsVisibility() {
+  const el = document.getElementById("baseball-teams");
+  if (!el) return;
+  el.style.display = activeMetric === "baseball" ? "flex" : "none";
 }
 // [name, year, lat, lng]
 const MAJOR_EARTHQUAKES = [
@@ -2469,6 +2541,7 @@ async function switchMetric(key) {
   if (!METRICS[key]) return;
   activeMetric = key;
   updateMetricNote();
+  updateBaseballTeamsVisibility();
   console.log(`[switchMetric] ${key} (nationalApplyData=${!!nationalApplyData}, nationalLoading=${!!nationalLoading})`);
   // nationalApplyData がまだなら、ロード完了を待ってから適用 (重要: 低ズーム初期切替時)
   if (!nationalApplyData) {
