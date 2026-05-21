@@ -319,9 +319,6 @@ const METRICS = {
   yakimono:   { label: "焼き物", unit: "種", loader: () => fetchYakimonoData(), ready: true,
     note: "出典: やきものプラザ (yakimono-plaza.com) — 各自治体の焼き物の種類数。素焼き色のグラデーション",
     footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" },
-  brandbeef:  { label: "ブランド牛", unit: "銘柄", loader: () => fetchBrandBeefData(), ready: true,
-    note: "出典: Wikipedia「日本のブランド牛一覧」+各銘柄記事の所在自治体 — 銘柄が紐づく自治体数",
-    footnote: "※銘柄ごとに記事内で言及される自治体すべて集計。米沢牛なら米沢/長井/南陽/高畠/川西/小国/白鷹/飯豊の8自治体に+1。但馬牛は養父/新温泉/香美など" },
   sake:       { label: "日本酒", unit: "蔵", loader: () => fetchSakeData(), ready: true,
     note: "出典: Wikipedia「日本酒メーカー一覧」+各蔵元記事の本社所在地 — 自治体別の蔵元数 / 蔵元なし=白",
     footnote: "※京都伏見10・兵庫西宮10・東灘6・郡山5・京丹後5・盛岡4・会津若松4・二本松4 などが上位。Wikipedia 記事のある蔵元のみ集計" },
@@ -534,9 +531,6 @@ async function fetchRashoData() {
 }
 async function fetchYakimonoData() {
   return fetchChainStoreData("yakimono", "data/yakimono.json");
-}
-async function fetchBrandBeefData() {
-  return fetchChainStoreData("brandbeef", "data/brandbeef.json");
 }
 async function fetchSakeData() {
   return fetchChainStoreData("sake", "data/sake.json");
@@ -963,14 +957,6 @@ const METRIC_PALETTES = {
     [0.80, [135,  85,  60]],
     [1.00, [ 95,  55,  40]]
   ],
-  brandbeef: [
-    [0.00, [245, 220, 215]],
-    [0.20, [230, 175, 165]],
-    [0.40, [210, 120, 110]],
-    [0.60, [185,  70,  65]],
-    [0.80, [140,  35,  40]],
-    [1.00, [ 85,  15,  25]]
-  ],
   baseball: [
     [0.00, [225, 240, 215]],
     [0.20, [180, 220, 155]],
@@ -1065,7 +1051,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "brandbeef" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1131,15 +1117,11 @@ function popColor(pop, minLog, maxLog) {
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "airport") {
-    // 空港あり=青 / なし=白
-    return pop >= 0.5 ? "#1976d2" : "#ffffff";
+    // 空港あり=シアン緑 / なし=白
+    return pop >= 0.5 ? "#00a78e" : "#ffffff";
   }
   if (activeMetric === "sake") {
     // 蔵元なし → 白
-    if (!pop || pop <= 0) return "#ffffff";
-  }
-  if (activeMetric === "brandbeef") {
-    // 該当銘柄なし → 白
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "baseball") {
@@ -1324,7 +1306,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "brandbeef" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2374,7 +2356,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "brandbeef", "baseball", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {
