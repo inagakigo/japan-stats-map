@@ -2346,22 +2346,72 @@ async function selectCity(layer, info) {
     eqHtml = majorHtml ? `<div class="detail-section">${majorHtml}</div>` : "";
   }
 
+  let baseballHtml = "";
+  if (activeMetric === "baseball") {
+    const players = await loadBaseballPlayers(info.prefName, info.cityName);
+    if (players && players.length) {
+      const top5 = players.slice(0, 5);
+      baseballHtml = `<div class="detail-section">
+        <strong>この自治体出身の主な野球選手</strong>
+        <div style="font-size:13px; color:#333; line-height:1.7; margin-top:4px;">
+          ${top5.map(p => `・<a href="https://ja.wikipedia.org/wiki/${encodeURIComponent(p)}" target="_blank" rel="noopener" style="color:#1976d2; text-decoration:none;">${p}</a>`).join("<br>")}
+        </div>
+      </div>`;
+    }
+  }
+
   contentEl.innerHTML = `
     <div class="detail-section">
       <strong>人口規模</strong>${popText}${rankHtml}
     </div>
     ${eqHtml}
+    ${baseballHtml}
     <div id="wiki-content" class="placeholder">Wikipedia 情報を取得中…</div>
   `;
   await renderWikipediaInfo(info, myToken);
 }
 
+let _baseballPlayersData = null;
+async function loadBaseballPlayers(pref, muni) {
+  if (!_baseballPlayersData) {
+    try {
+      const res = await fetch("data/baseball_players.json");
+      _baseballPlayersData = res.ok ? await res.json() : {};
+    } catch { _baseballPlayersData = {}; }
+  }
+  return _baseballPlayersData[`${pref}|${muni}`] || [];
+}
+
 async function showDesignatedCityInfo(info, popText) {
   const myToken = ++cityLoadToken;
+  let baseballHtml = "";
+  if (activeMetric === "baseball") {
+    // 政令市全体: 各区の代表選手を集めて sitelinks 上位順を再構築するのは難しいので、
+    // 全区分をマージしてランダムに 5 件 (今は単純結合)
+    const merged = [];
+    if (!_baseballPlayersData) await loadBaseballPlayers(info.prefName, "");
+    if (_baseballPlayersData) {
+      for (const m of info.members) {
+        // 区名 (member.name) で検索
+        const list = _baseballPlayersData[`${info.prefName}|${m.name}`] || [];
+        for (const p of list) if (!merged.includes(p)) merged.push(p);
+      }
+    }
+    if (merged.length) {
+      const top5 = merged.slice(0, 5);
+      baseballHtml = `<div class="detail-section">
+        <strong>この政令市出身の主な野球選手</strong>
+        <div style="font-size:13px; color:#333; line-height:1.7; margin-top:4px;">
+          ${top5.map(p => `・<a href="https://ja.wikipedia.org/wiki/${encodeURIComponent(p)}" target="_blank" rel="noopener" style="color:#1976d2; text-decoration:none;">${p}</a>`).join("<br>")}
+        </div>
+      </div>`;
+    }
+  }
   contentEl.innerHTML = `
     <div class="detail-section">
       <strong>合計人口 (政令指定都市)</strong>${popText}
     </div>
+    ${baseballHtml}
     <div class="placeholder" style="margin-bottom:12px;">区をクリックすると区の詳細が表示されます。</div>
     <div id="wiki-content" class="placeholder">Wikipedia 情報を取得中…</div>
   `;

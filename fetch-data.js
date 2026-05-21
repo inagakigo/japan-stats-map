@@ -1780,6 +1780,77 @@ async function fetchBaseballTeams() {
   console.log(`  → wrote 12 team files`);
 }
 
+// ----- プロ野球選手の代表選手 (自治体ごとの著名選手 top N) -----
+async function fetchBaseballPlayers() {
+  console.log("[baseball-players]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+
+  // 大規模クエリ — sitelinks >= 2 でフィルタして件数を絞る (有名選手だけ取れば十分)
+  const query = `
+    SELECT ?p ?pLabel ?bpLabel ?adminLabel ?sl WHERE {
+      ?p wdt:P106 wd:Q10871364 ;
+         wdt:P27 wd:Q17 ;
+         wdt:P19 ?bp ;
+         wikibase:sitelinks ?sl .
+      FILTER (?sl >= 2)
+      OPTIONAL { ?bp wdt:P131* ?admin . ?admin wdt:P31 wd:Q50337 . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    }
+    ORDER BY DESC(?sl)
+  `;
+  const url = "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query);
+  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/sparql-results+json" } });
+  const data = await res.json();
+  const bindings = data.results?.bindings || [];
+  console.log(`  [baseball-players] ${bindings.length} records`);
+
+  const resolveMuni = (bp, pref, prefMunis) => {
+    if (!pref || !PREF_SET.has(pref) || bp === pref) return null;
+    if (prefMunis.includes(bp)) return bp;
+    if (DC.has(bp)) return bp;
+    if (/区$/.test(bp)) {
+      const ws = prefMunis.filter(m => m === bp);
+      return ws.length ? ws[0] : null;
+    }
+    const w = bp.match(/[^市区町村]+(?:市|町|村|区)$/);
+    if (w && prefMunis.includes(w[0])) return w[0];
+    return null;
+  };
+
+  const playersByMuni = new Map(); // "pref|muni" → [{ name, sl }]
+  const seen = new Set();
+  for (const b of bindings) {
+    const pid = b.p?.value || "";
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    const name = (b.pLabel?.value || "").trim();
+    if (!name || /^Q\d+$/.test(name)) continue; // ラベルなし
+    const bp = (b.bpLabel?.value || "").trim();
+    const pref = (b.adminLabel?.value || "").trim();
+    const sl = Number(b.sl?.value || 0);
+    const muni = resolveMuni(bp, pref, munisByPref.get(pref) || []);
+    if (!muni) continue;
+    const key = `${pref}|${muni}`;
+    if (!playersByMuni.has(key)) playersByMuni.set(key, []);
+    if (playersByMuni.get(key).length < 10) {
+      playersByMuni.get(key).push({ name, sl });
+    }
+  }
+  // 各 muni 内で sl 降順ソートし、name のリストに変換
+  const out = {};
+  for (const [k, list] of playersByMuni) {
+    list.sort((a, b) => b.sl - a.sl);
+    out[k] = list.slice(0, 8).map(p => p.name);
+  }
+  console.log(`  [baseball-players] ${Object.keys(out).length} munis`);
+  console.log(`  [baseball-players] sample:`);
+  Object.entries(out).slice(0, 5).forEach(([k, v]) => console.log(`    ${k}: ${v.join(", ")}`));
+  await fs.writeFile(path.join(OUT, "baseball_players.json"), JSON.stringify(out));
+  console.log(`  → wrote baseball_players.json`);
+}
+
 async function fetchBaseball() {
   console.log("[baseball]");
   const munisByPref = await getMunisByPref();
@@ -1902,6 +1973,7 @@ const TASKS = {
   airport: fetchAirports,
   baseball: fetchBaseball,
   baseballTeams: fetchBaseballTeams,
+  baseballPlayers: fetchBaseballPlayers,
 };
 
 const args = process.argv.slice(2);
