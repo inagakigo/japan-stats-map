@@ -104,7 +104,8 @@
     font-size: 12px; color: #ccc; margin-top: 8px;
     font-weight: 400; letter-spacing: 0;
   }
-  .pref { fill: #cfe2f3; stroke: #5b8db8; stroke-width: 0.7; cursor: pointer; transition: fill 0.15s; }
+  .pref { stroke: #5b8db8; stroke-width: 0.7; cursor: pointer; transition: fill 0.15s; }
+  /* fill は Leaflet の setStyle (fillColor) で動的に設定 — CSS で書くと SVG fill 属性を上書きしてヒートマップが効かない */
   .pref:hover { fill: #9ec3e0; }
   .pref-border {
     fill: transparent; stroke: #0d2238; stroke-width: 4;
