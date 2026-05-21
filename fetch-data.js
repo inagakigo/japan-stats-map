@@ -1483,49 +1483,93 @@ async function fetchAirports() {
   console.log(`  → wrote airport.json`);
 }
 
-// ----- 日本酒の蔵元 (Wikipedia「日本酒メーカー一覧」より県別カウント) -----
+// ----- 日本酒の蔵元 (各蔵元記事の所在地から自治体カウント) -----
 async function fetchSake() {
   console.log("[sake]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
   const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E9%85%92%E3%83%A1%E3%83%BC%E3%82%AB%E3%83%BC%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
-  const json = await (await fetch(url)).json();
+  const json = await (await fetch(url, { headers: { "User-Agent": UA } })).json();
   const wt = json.parse?.wikitext?.["*"] || "";
-  if (!wt) throw new Error("sake wikitext empty");
-  const lines = wt.split(/\n/);
-  let curPref = null;
-  const prefCounts = {};
-  for (const line of lines) {
-    const h = line.match(/^={2,}\s*(.+?)\s*={2,}/);
-    if (h) {
-      const name = h[1].trim();
-      if (PREF_SET.has(name)) { curPref = name; prefCounts[name] = 0; }
-      else curPref = null;
-      continue;
+
+  // 各 bullet 行から「[[記事名]]」リンクを抽出
+  const titles = [];
+  for (const line of wt.split("\n")) {
+    if (!/^\*\s*\[/.test(line)) continue;
+    // 最初の [[link]] を採用 (社名のリンクが先頭)
+    const m = line.match(/\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/);
+    if (m) titles.push(m[1].trim());
+  }
+  console.log(`  [sake] ${titles.length} brewery article titles`);
+
+  // 各記事を batch fetch → 本社所在地/所在地 から (pref, muni) 抽出
+  const counts = new Map(); // "pref|muni" → count
+  for (let i = 0; i < titles.length; i += 30) {
+    const batch = titles.slice(i, i + 30);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    let j;
+    try {
+      const res = await fetch(u, { headers: { "User-Agent": UA } });
+      const txt = await res.text();
+      j = JSON.parse(txt);
+    } catch (e) {
+      console.log(`  [sake] batch ${i}: ${e.message} — 2s wait & retry`);
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const res = await fetch(u, { headers: { "User-Agent": UA } });
+        j = JSON.parse(await res.text());
+      } catch (e2) { console.log(`  [sake] batch ${i}: retry failed`); continue; }
     }
-    if (curPref && /^\*\s*\[/.test(line)) prefCounts[curPref]++;
+    const pages = j.query?.pages || [];
+    if (i % 90 === 60) await new Promise(r => setTimeout(r, 500));
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      // フィールド優先順: 本社所在地 > 所在地 > 本店所在地
+      let block = "";
+      for (const f of ["本社所在地", "所在地", "本店所在地"]) {
+        const re = new RegExp(`\\|\\s*${f}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\|\\s*\\w|\\n\\}\\})`);
+        const mm = w.match(re);
+        if (mm && mm[1].trim()) { block = mm[1]; break; }
+      }
+      if (!block) continue;
+      // pref + muni 抽出
+      const prefM = block.match(/\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]/);
+      if (!prefM) continue;
+      const pref = prefM[1];
+      if (!PREF_SET.has(pref)) continue;
+      // pref 以降の文字列から muni を見つける
+      const afterIdx = block.indexOf(prefM[0]) + prefM[0].length;
+      const after = block.slice(afterIdx, afterIdx + 200);
+      const prefMunis = munisByPref.get(pref) || [];
+      let muni = null;
+      // 政令市の区
+      const dcRe = /\[\[(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)\]\]\[\[(?:[^\]|]+?\|)?([^\]|]+?区)\]\]/;
+      const dcM = after.match(dcRe);
+      if (dcM) muni = dcM[2];
+      else {
+        // 通常 muni リンク
+        const muniM = after.match(/\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/);
+        if (muniM) {
+          const candidate = muniM[1].replace(/\s*\([^)]*\)\s*$/, "");
+          // pref の自治体リストに含まれるか確認
+          if (prefMunis.includes(candidate)) muni = candidate;
+        }
+      }
+      if (!muni) continue;
+      const key = `${pref}|${muni}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
   }
 
-  // 各県の自治体に同じ値を割当 (brandbeef と同じ方式)
-  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
-  const topo = JSON.parse(txt);
-  const objKey = Object.keys(topo.objects)[0];
-  const geoms = topo.objects[objKey].geometries || [];
-  const prefToCodes = new Map();
-  for (const g of geoms) {
-    const props = g.properties || {};
-    const pref = props.N03_001;
-    const code5 = String(props.N03_007 || "").slice(0, 5);
-    if (!pref || !code5) continue;
-    if (!prefToCodes.has(pref)) prefToCodes.set(pref, new Set());
-    prefToCodes.get(pref).add(code5);
-  }
   const entries = [];
-  for (const [pref, count] of Object.entries(prefCounts)) {
-    const codes = prefToCodes.get(pref);
-    if (!codes) continue;
-    for (const c of codes) entries.push([c, count]);
+  for (const [k, c] of counts) {
+    const [pref, muni] = k.split("|");
+    entries.push([pref, muni, c]);
   }
-  console.log(`  [sake] ${Object.keys(prefCounts).length} prefs, ${entries.length} muni entries`);
-  Object.entries(prefCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).forEach(([p, c]) => console.log(`    ${p}: ${c}`));
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [sake] ${entries.length} muni entries with breweries`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
   await fs.writeFile(path.join(OUT, "sake.json"), JSON.stringify(entries));
   console.log(`  → wrote sake.json`);
 }
@@ -1534,51 +1578,97 @@ async function fetchSake() {
 // 県単位の指標なので、その県に属する全自治体に同じ値を割当 (popMap の pref 2 桁 fallback を利用)
 async function fetchBrandBeef() {
   console.log("[brandbeef]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
   const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E3%81%AE%E3%83%96%E3%83%A9%E3%83%B3%E3%83%89%E7%89%9B%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
-  const json = await (await fetch(url)).json();
+  const json = await (await fetch(url, { headers: { "User-Agent": UA } })).json();
   const wt = json.parse?.wikitext?.["*"] || "";
   if (!wt) throw new Error("brandbeef wikitext empty");
 
-  // 県セクションごとに bullet (* で始まる行) を数える
-  const sections = wt.split(/^==\s*([^=]+?)\s*==/m);
-  const prefCounts = {}; // pref → count
-  for (let i = 1; i < sections.length; i += 2) {
-    const pref = sections[i].trim();
-    if (!PREF_SET.has(pref)) continue;
-    const body = sections[i + 1];
-    const bullets = (body.match(/^\*\s*\[/gm) || []).length;
-    prefCounts[pref] = bullets;
+  // 全 bullet 行から [[銘柄名]] を抽出
+  const titles = [];
+  for (const line of wt.split("\n")) {
+    if (!/^\*\s*\[/.test(line)) continue;
+    const m = line.match(/^\*\s*\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/);
+    if (m) titles.push(m[1].trim());
+  }
+  console.log(`  [brandbeef] ${titles.length} brand article titles`);
+
+  // DC 親市リスト
+  const DC = ["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"];
+
+  // 各記事の本文冒頭から「[[県]][[市/町/村]]」パターンを取って 1 銘柄=1 muni でカウント
+  const counts = new Map();
+  for (let i = 0; i < titles.length; i += 30) {
+    const batch = titles.slice(i, i + 30);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    let j;
+    try {
+      const res = await fetch(u, { headers: { "User-Agent": UA } });
+      j = JSON.parse(await res.text());
+    } catch (e) {
+      console.log(`  [brandbeef] batch ${i}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 2000));
+      continue;
+    }
+    const pages = j.query?.pages || [];
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      const intro = w.slice(0, 3000);
+      const brandTitle = p.title; // 例: 米沢牛, 松阪牛, 神戸ビーフ
+      // ステップ1: [[県]][[市/町/村]] パターン
+      const re = /\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]\s*(?:\[\[[^\]|]+?郡(?:\|[^\]]+)?\]\])?\s*\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/g;
+      let pm;
+      let found = false;
+      while (!found && (pm = re.exec(intro))) {
+        const pref = pm[1].replace(/\s*\([^)]*\)\s*$/, "");
+        const muniRaw = pm[2].replace(/\s*\([^)]*\)\s*$/, "");
+        if (!PREF_SET.has(pref)) continue;
+        const prefMunis = munisByPref.get(pref) || [];
+        let muni = muniRaw;
+        if (DC.includes(muniRaw)) {
+          const wardAfter = intro.slice(pm.index + pm[0].length, pm.index + pm[0].length + 60);
+          const wm = wardAfter.match(/^\s*\[\[(?:[^\]|]+?\|)?([^\]|]+?区)\]\]/);
+          if (wm) muni = wm[1];
+        }
+        if (!prefMunis.includes(muni)) continue;
+        counts.set(`${pref}|${muni}`, (counts.get(`${pref}|${muni}`) || 0) + 1);
+        found = true;
+      }
+      if (found) continue;
+
+      // ステップ2: 銘柄名から muni 推測。最初に見つかった県の muni リストから、銘柄名に含まれる muni を探す
+      const prefM = intro.match(/\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]/);
+      if (!prefM) continue;
+      const pref = prefM[1].replace(/\s*\([^)]*\)\s*$/, "");
+      if (!PREF_SET.has(pref)) continue;
+      const prefMunis = munisByPref.get(pref) || [];
+      // 銘柄名から「XX牛」「XXビーフ」を切り取った地名部分
+      const brandStem = brandTitle.replace(/(牛|ビーフ|和牛|黒毛|あか牛|赤牛|短角牛)$/g, "").replace(/^(特産|くまもと)/, "");
+      // brandStem を含む muni を探す (最長マッチ)
+      let bestMuni = null;
+      for (const cand of [...prefMunis].sort((a, b) => b.length - a.length)) {
+        const candStem = cand.replace(/(市|町|村|区)$/, "");
+        if (brandStem.includes(candStem) || candStem.includes(brandStem)) {
+          bestMuni = cand;
+          break;
+        }
+      }
+      if (bestMuni) {
+        counts.set(`${pref}|${bestMuni}`, (counts.get(`${pref}|${bestMuni}`) || 0) + 1);
+      }
+    }
   }
 
-  // 各県の自治体 code5 をすべて取得し、その県の brand 数をそれぞれに割当
-  const munisByPref = await getMunisByPref();
-  // muniToPref と prefCode マップが必要。pref 名 → 2 桁コード を topojson から構築。
-  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
-  const topo = JSON.parse(txt);
-  const objKey = Object.keys(topo.objects)[0];
-  const geoms = topo.objects[objKey].geometries || [];
-  const prefToCodes = new Map(); // pref → Set<code5>
-  for (const g of geoms) {
-    const props = g.properties || {};
-    const pref = props.N03_001;
-    const code5 = String(props.N03_007 || "").slice(0, 5);
-    if (!pref || !code5) continue;
-    if (!prefToCodes.has(pref)) prefToCodes.set(pref, new Set());
-    prefToCodes.get(pref).add(code5);
-  }
-
-  // 出力形式: [[code5, count], ...]
   const entries = [];
-  for (const [pref, count] of Object.entries(prefCounts)) {
-    const codes = prefToCodes.get(pref);
-    if (!codes) continue;
-    for (const c of codes) entries.push([c, count]);
+  for (const [k, c] of counts) {
+    const [pref, muni] = k.split("|");
+    entries.push([pref, muni, c]);
   }
-  const totalPrefs = Object.keys(prefCounts).length;
-  console.log(`  [brandbeef] ${totalPrefs} prefs, ${entries.length} muni entries`);
-  const sorted = Object.entries(prefCounts).sort((a, b) => b[1] - a[1]);
-  console.log(`  [brandbeef] top 10:`);
-  sorted.slice(0, 10).forEach(([p, c]) => console.log(`    ${p}: ${c}`));
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [brandbeef] ${entries.length} muni entries`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
   await fs.writeFile(path.join(OUT, "brandbeef.json"), JSON.stringify(entries));
   console.log(`  → wrote brandbeef.json`);
 }

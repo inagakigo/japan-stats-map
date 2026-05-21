@@ -320,11 +320,11 @@ const METRICS = {
     note: "出典: やきものプラザ (yakimono-plaza.com) — 各自治体の焼き物の種類数。素焼き色のグラデーション",
     footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" },
   brandbeef:  { label: "ブランド牛", unit: "銘柄", loader: () => fetchBrandBeefData(), ready: true,
-    note: "出典: Wikipedia「日本のブランド牛一覧」 — 県別のブランド牛銘柄数",
-    footnote: "※県単位の指標。県内の全自治体に同じ値を表示。北海道21・岩手8・栃木8・兵庫8・茨城7・秋田6 などが上位" },
+    note: "出典: Wikipedia「日本のブランド牛一覧」+各銘柄記事の所在地 — 自治体別のブランド牛銘柄数",
+    footnote: "※Wikipedia 記事のある銘柄(158)のうち、所在地から自治体を特定できた36件のみ表示。「松阪牛→松阪市」のように銘柄名から自治体を推測。「米沢牛→置賜地方」のように複数自治体にまたがる銘柄は記事冒頭の代表自治体に集計" },
   sake:       { label: "日本酒", unit: "蔵", loader: () => fetchSakeData(), ready: true,
-    note: "出典: Wikipedia「日本酒メーカー一覧」 — 県別の蔵元数。シアン系のグラデーション",
-    footnote: "※県単位の指標。兵庫70・愛知41・京都38・石川33・新潟32・奈良32・滋賀28 などが上位" },
+    note: "出典: Wikipedia「日本酒メーカー一覧」+各蔵元記事の本社所在地 — 自治体別の蔵元数 / 蔵元なし=白",
+    footnote: "※京都伏見10・兵庫西宮10・東灘6・郡山5・京丹後5・盛岡4・会津若松4・二本松4 などが上位。Wikipedia 記事のある蔵元のみ集計" },
   airport:    { label: "空港", unit: "", loader: () => fetchAirportData(), ready: true,
     note: "出典: Wikipedia「日本の空港」地域一覧 — 青=空港所在 / 白=非該当",
     footnote: "※民間・自衛隊共用・離島の主要空港・飛行場を含む(ヘリポート除く)。81 自治体に所在" }
@@ -533,16 +533,10 @@ async function fetchYakimonoData() {
   return fetchChainStoreData("yakimono", "data/yakimono.json");
 }
 async function fetchBrandBeefData() {
-  // data/brandbeef.json は [[code5, count], ...] 形式 (各 muni に直接値を割当済)
-  const res = await fetch("data/brandbeef.json");
-  if (!res.ok) throw new Error(`brandbeef HTTP ${res.status}`);
-  const entries = await res.json();
-  return new Map(entries);
+  return fetchChainStoreData("brandbeef", "data/brandbeef.json");
 }
 async function fetchSakeData() {
-  const res = await fetch("data/sake.json");
-  if (!res.ok) throw new Error(`sake HTTP ${res.status}`);
-  return new Map(await res.json());
+  return fetchChainStoreData("sake", "data/sake.json");
 }
 async function fetchAirportData() {
   return loadPairListAsBinaryMap("airport", "data/airport.json");
@@ -1057,7 +1051,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "brandbeef" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1125,6 +1119,14 @@ function popColor(pop, minLog, maxLog) {
   if (activeMetric === "airport") {
     // 空港あり=青 / なし=白
     return pop >= 0.5 ? "#1976d2" : "#ffffff";
+  }
+  if (activeMetric === "sake") {
+    // 蔵元なし → 白
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "brandbeef") {
+    // 該当銘柄なし → 白
+    if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "bear") {
     // 0 / 未収集自治体は白
@@ -1243,7 +1245,7 @@ async function buildNationalLayer() {
     }
     function recomputeAggregates() {
       // 平均で集計したい指標 (密度系・1人当たり系など加法的でないもの)
-      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "brandbeef" || activeMetric === "sake";
+      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy";
       const allowZero = activeMetric === "paidBag";
       for (const info of cityGroup.values()) {
         let total = 0, any = false, count = 0;
@@ -1304,7 +1306,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "brandbeef" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -1337,7 +1339,7 @@ async function buildNationalLayer() {
     }
     function computePrefAggregates() {
       // 都道府県別の集計値 (低ズーム時のヒートマップ用)
-      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag" || activeMetric === "brandbeef" || activeMetric === "sake";
+      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag";
       const prefData = new Map();
       for (const info of cityGroup.values()) {
         for (const m of info.members) {
@@ -2354,7 +2356,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "brandbeef", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {
