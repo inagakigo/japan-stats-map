@@ -354,19 +354,19 @@ const METRICS = {
 let activeMetric = "population";
 // プロ野球: 「全チーム」or 12 球団のいずれか
 const NPB_TEAMS = [
-  { key: "all",       name: "全チーム", color: [125, 60, 175] },    // 紫
-  { key: "giants",    name: "巨人",     color: [255, 110, 0] },     // オレンジ
-  { key: "tigers",    name: "阪神",     color: [240, 200, 60] },    // 黄
-  { key: "dragons",   name: "中日",     color: [10, 60, 145] },     // 紺
-  { key: "carp",      name: "広島",     color: [215, 25, 30] },     // 赤
-  { key: "swallows",  name: "ヤクルト", color: [40, 155, 70] },     // 緑
-  { key: "baystars",  name: "DeNA",     color: [0, 130, 200] },     // 青
-  { key: "hawks",     name: "ソフトB",  color: [245, 200, 30] },    // 金
-  { key: "fighters",  name: "日ハム",   color: [40, 80, 175] },     // 青系
-  { key: "eagles",    name: "楽天",     color: [150, 25, 60] },     // クリムゾン
-  { key: "marines",   name: "ロッテ",   color: [40, 40, 50] },      // 黒
-  { key: "buffaloes", name: "オリックス", color: [80, 60, 35] },    // ブロンズ
-  { key: "lions",     name: "西武",     color: [0, 60, 170] }       // 青
+  { key: "all",       name: "全",   full: "全チーム",                     color: [125, 60, 175] },
+  { key: "giants",    name: "巨人", full: "読売ジャイアンツ",             color: [255, 110, 0] },
+  { key: "tigers",    name: "阪神", full: "阪神タイガース",               color: [240, 200, 60] },
+  { key: "dragons",   name: "中日", full: "中日ドラゴンズ",               color: [10, 60, 145] },
+  { key: "carp",      name: "広島", full: "広島東洋カープ",               color: [215, 25, 30] },
+  { key: "swallows",  name: "ヤク", full: "東京ヤクルトスワローズ",       color: [40, 155, 70] },
+  { key: "baystars",  name: "De",   full: "横浜DeNAベイスターズ",         color: [0, 130, 200] },
+  { key: "hawks",     name: "鷹",   full: "福岡ソフトバンクホークス",     color: [245, 200, 30] },
+  { key: "fighters",  name: "ハム", full: "北海道日本ハムファイターズ",   color: [40, 80, 175] },
+  { key: "eagles",    name: "楽天", full: "東北楽天ゴールデンイーグルス", color: [150, 25, 60] },
+  { key: "marines",   name: "ロ",   full: "千葉ロッテマリーンズ",         color: [40, 40, 50] },
+  { key: "buffaloes", name: "オリ", full: "オリックス・バファローズ",     color: [80, 60, 35] },
+  { key: "lions",     name: "西武", full: "埼玉西武ライオンズ",           color: [0, 60, 170] }
 ];
 let baseballTeam = "all";
 const metricDataCache = new Map();
@@ -2335,6 +2335,7 @@ function buildBaseballTeamSelector() {
     const btn = document.createElement("button");
     btn.className = "team-btn" + (t.key === baseballTeam ? " active" : "");
     btn.textContent = t.name;
+    btn.title = t.full || t.name;
     btn.dataset.key = t.key;
     const [r, g, b] = t.color;
     btn.style.borderColor = `rgb(${r},${g},${b})`;
