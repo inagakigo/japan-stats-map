@@ -1412,6 +1412,77 @@ async function fetchYakimono() {
   console.log(`  → wrote yakimono.json`);
 }
 
+// ----- 空港 (Wikipedia「日本の空港」地域一覧より) -----
+async function fetchAirports() {
+  console.log("[airport]");
+  const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E3%81%AE%E7%A9%BA%E6%B8%AF&format=json&prop=wikitext";
+  const json = await (await fetch(url)).json();
+  const wt = json.parse?.wikitext?.["*"] || "";
+  if (!wt) throw new Error("airport wikitext empty");
+
+  // 「== 地域一覧 ==」から次の level-2 セクションまで切り出し
+  const start = wt.search(/==\s*地域一覧\s*==/);
+  // \n== name == の形式 (level 2 のみ — level 3 は === なので回避)
+  const restAfter = wt.slice(start + 20);
+  const nextMatch = restAfter.search(/\n==[^=][^\n]*==[^=]/);
+  const end = nextMatch >= 0 ? start + 20 + nextMatch : wt.length;
+  const section = wt.slice(start, end);
+
+  // 各 bullet 行から 〔...〕 を抽出
+  // 北海道地方セクションでは pref が省略され muni のみ
+  const lines = section.split("\n");
+  let curRegionPref = null;
+  const pairs = []; // [pref, muni]
+  const seen = new Set();
+  for (const line of lines) {
+    const sec = line.match(/^={2,}\s*([^=]+?)\s*={2,}/);
+    if (sec) {
+      // 「北海道地方」→ pref=北海道 とする (region pref として保持)
+      const reg = sec[1].trim();
+      if (reg === "北海道地方") curRegionPref = "北海道";
+      else curRegionPref = null;
+      continue;
+    }
+    if (!line.startsWith("*")) continue;
+    // 〔...〕 を抽出
+    const br = line.match(/〔([^〕]+)〕/);
+    if (!br) continue;
+    const content = br[1];
+    // 中の [[links]] を全取得
+    const links = [...content.matchAll(/\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g)].map(m => m[1].trim());
+    if (!links.length) continue;
+    // 先頭が県なら基準にする
+    let pref = curRegionPref;
+    let muniLinks = [...links];
+    if (PREF_SET.has(links[0])) {
+      pref = links[0];
+      muniLinks = links.slice(1);
+    }
+    if (!pref) continue;
+    let currentPref = pref;
+    for (const l of muniLinks) {
+      const clean = l.replace(/\s*\([^)]*\)\s*$/, "");
+      if (PREF_SET.has(clean)) {
+        // 途中で別の県名が出てきた場合 (複数県にまたがる空港) → pref を切替
+        currentPref = clean;
+        continue;
+      }
+      // 郡名はスキップ
+      if (/郡$/.test(clean)) continue;
+      // 市/町/村/区 のいずれか
+      if (!/(市|町|村|区)$/.test(clean)) continue;
+      const k = `${currentPref}|${clean}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      pairs.push([currentPref, clean, 1]);
+    }
+  }
+  console.log(`  [airport] ${pairs.length} (pref,muni) entries`);
+  pairs.slice(0, 15).forEach(([p, m]) => console.log(`    ${p} ${m}`));
+  await fs.writeFile(path.join(OUT, "airport.json"), JSON.stringify(pairs));
+  console.log(`  → wrote airport.json`);
+}
+
 // ----- 日本酒の蔵元 (Wikipedia「日本酒メーカー一覧」より県別カウント) -----
 async function fetchSake() {
   console.log("[sake]");
@@ -1560,6 +1631,7 @@ const TASKS = {
   yakimono: fetchYakimono,
   brandbeef: fetchBrandBeef,
   sake: fetchSake,
+  airport: fetchAirports,
 };
 
 const args = process.argv.slice(2);
