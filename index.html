@@ -2464,14 +2464,47 @@ async function showDesignatedCityInfo(info, popText) {
   }, myToken);
 }
 
+// metric → category マップ
+const METRIC_CATEGORIES = [
+  { name: "人口動態",       keys: ["population", "density", "aging", "avgAge", "vacancy"] },
+  { name: "自然・地形",     keys: ["forest", "rainfall", "hyakumeizan", "park", "water100"] },
+  { name: "インフラ",       keys: ["nuclear", "dam", "military", "airport", "paidBag"] },
+  { name: "歴史・出来事",   keys: ["earthquake", "airraid", "heisei"] },
+  { name: "文化・産業",     keys: ["restaurant", "sake", "yakimono", "ohsho", "yamaokaya", "rasho"] },
+  { name: "スポーツ",       keys: ["baseball"] },
+  { name: "動植物・生活",   keys: ["bear"] }
+];
+
 function initMetricSelect() {
   const sel = document.getElementById("metric-select");
   sel.innerHTML = "";
-  for (const [key, m] of Object.entries(METRICS)) {
-    const opt = document.createElement("option");
-    opt.value = key;
-    opt.textContent = m.ready ? m.label : `${m.label} (準備中)`;
-    sel.appendChild(opt);
+  const placed = new Set();
+  for (const cat of METRIC_CATEGORIES) {
+    const og = document.createElement("optgroup");
+    og.label = cat.name;
+    for (const key of cat.keys) {
+      const m = METRICS[key];
+      if (!m) continue;
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = m.ready ? m.label : `${m.label} (準備中)`;
+      og.appendChild(opt);
+      placed.add(key);
+    }
+    if (og.children.length) sel.appendChild(og);
+  }
+  // カテゴリ未定義の指標があれば「その他」へ
+  const others = Object.entries(METRICS).filter(([k]) => !placed.has(k));
+  if (others.length) {
+    const og = document.createElement("optgroup");
+    og.label = "その他";
+    for (const [key, m] of others) {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = m.ready ? m.label : `${m.label} (準備中)`;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
   }
   sel.value = activeMetric;
   updateMetricNote();
