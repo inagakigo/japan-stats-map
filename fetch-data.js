@@ -1970,6 +1970,67 @@ async function fetchTraffic() {
   console.log(`  → wrote traffic.json`);
 }
 
+// ----- 火力発電所 (Wikipedia 日本の火力発電所一覧) -----
+async function fetchThermal() {
+  console.log("[thermal]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E3%81%AE%E7%81%AB%E5%8A%9B%E7%99%BA%E9%9B%BB%E6%89%80%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
+  const json = await (await fetch(url, { headers: { "User-Agent": UA } })).json();
+  const wt = json.parse?.wikitext?.["*"] || "";
+
+  // 「かつて存在した発電所」セクション以降は除外
+  const cutIdx = wt.search(/==\s*かつて存在した発電所\s*==/);
+  const main = cutIdx > 0 ? wt.slice(0, cutIdx) : wt;
+
+  // 各テーブル内の |- で区切られた行ごとに「[[県]]...[[市町村]]」を抽出
+  const rows = main.split(/\|-/);
+  const counts = new Map(); // "pref|muni" → count
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  const linkRe = /\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g;
+  for (const row of rows) {
+    if (!/\[\[[^\]]+(?:都|道|府|県)\]\]/.test(row)) continue;
+    let curPref = null;
+    let muni = null;
+    let mm;
+    linkRe.lastIndex = 0;
+    while ((mm = linkRe.exec(row))) {
+      const baseName = mm[1].trim().replace(/\s*\([^)]*\)\s*$/, "");
+      if (PREF_SET.has(baseName)) {
+        curPref = baseName;
+        muni = null; // 新しい県が出てきたらリセット
+      } else if (/郡$/.test(baseName)) {
+        // skip
+      } else if (/(市|町|村)$/.test(baseName) && curPref && !muni) {
+        const prefMunis = munisByPref.get(curPref) || [];
+        if (prefMunis.includes(baseName)) {
+          muni = baseName;
+        } else if (DC.has(baseName)) {
+          muni = baseName;
+        }
+      } else if (/区$/.test(baseName) && curPref && !muni) {
+        const prefMunis = munisByPref.get(curPref) || [];
+        if (prefMunis.includes(baseName)) muni = baseName;
+      }
+    }
+    if (curPref && muni) {
+      const key = `${curPref}|${muni}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+
+  const entries = [];
+  for (const [k, c] of counts) {
+    const [pref, muni] = k.split("|");
+    entries.push([pref, muni, c]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [thermal] ${entries.length} muni entries`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "thermal.json"), JSON.stringify(entries));
+  console.log(`  → wrote thermal.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -2023,6 +2084,7 @@ const TASKS = {
   baseballTeams: fetchBaseballTeams,
   baseballPlayers: fetchBaseballPlayers,
   traffic: fetchTraffic,
+  thermal: fetchThermal,
 };
 
 const args = process.argv.slice(2);

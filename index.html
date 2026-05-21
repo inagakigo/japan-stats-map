@@ -315,6 +315,9 @@ const METRICS = {
   nuclear:    { label: "原発", unit: "", loader: () => fetchNuclearData(), ready: true,
     note: "出典: Wikipedia「日本の原子力発電所」 — 赤=現存(運用/建設/廃止解体) / 黄=計画中止 / 白=非該当",
     footnote: "※現存は運用中・建設中・廃止解体中を含む。計画中止には未着工で立ち消えた構想を含む" },
+  thermal:    { label: "火力発電所", unit: "基", loader: () => fetchThermalData(), ready: true,
+    note: "出典: Wikipedia「日本の火力発電所一覧」 — 自治体ごとの発電所数。多いほど煙突色(濃)",
+    footnote: "※現存する火力発電所(石炭/LNG/石油等)。1自治体に複数基あるケースも含む" },
   dam:        { label: "大規模ダム", unit: "", loader: () => fetchDamData(), ready: true,
     note: "出典: Wikipedia「日本のダム一覧 (堤高順)」 + 各ダム記事の Infobox — シアン=堤高100m以上のダム所在 / 白=非該当",
     footnote: "※堤高100m以上の大規模ダム(51基)の所在自治体。ダムが複数自治体にまたがる場合は両方マーク" },
@@ -587,6 +590,9 @@ async function fetchTrafficData() {
   const res = await fetch("data/traffic.json");
   if (!res.ok) throw new Error(`traffic HTTP ${res.status}`);
   return new Map(await res.json());
+}
+async function fetchThermalData() {
+  return fetchChainStoreData("thermal", "data/thermal.json");
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -1036,6 +1042,14 @@ const METRIC_PALETTES = {
     [0.60, [205,  90,  75]],
     [0.80, [165,  45,  50]],
     [1.00, [110,  15,  30]]
+  ],
+  thermal: [
+    [0.00, [225, 215, 200]],
+    [0.20, [180, 165, 140]],
+    [0.40, [135, 115,  85]],
+    [0.60, [ 95,  80,  60]],
+    [0.80, [ 65,  50,  40]],
+    [1.00, [ 35,  25,  20]]
   ]
 };
 function canonicalEdge(a, b) {
@@ -1143,7 +1157,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1206,6 +1220,10 @@ function popColor(pop, minLog, maxLog) {
   }
   if (activeMetric === "yakimono") {
     // 焼き物なし → 白
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "thermal") {
+    // 火力発電所なし → 白
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "airport") {
@@ -1409,7 +1427,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2484,7 +2502,7 @@ async function showDesignatedCityInfo(info, popText) {
 const METRIC_CATEGORIES = [
   { name: "人口動態",       keys: ["population", "density", "aging", "avgAge", "vacancy"] },
   { name: "自然・地形",     keys: ["forest", "rainfall", "hyakumeizan", "park", "water100"] },
-  { name: "インフラ",       keys: ["nuclear", "dam", "military", "airport", "paidBag"] },
+  { name: "インフラ",       keys: ["nuclear", "thermal", "dam", "military", "airport", "paidBag"] },
   { name: "歴史・出来事",   keys: ["earthquake", "airraid", "heisei"] },
   { name: "文化・産業",     keys: ["restaurant", "sake", "yakimono", "ohsho", "yamaokaya", "rasho"] },
   { name: "スポーツ",       keys: ["baseball"] },
@@ -2642,7 +2660,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "thermal", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "baseball") {
