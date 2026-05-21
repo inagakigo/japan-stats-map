@@ -2179,6 +2179,66 @@ async function fetchMines() {
   console.log(`  → wrote mine.json`);
 }
 
+// ----- 宗教 (Wikidata 宗教法人/宗教団体の本拠地) -----
+async function fetchReligion() {
+  console.log("[religion]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+
+  const query = `
+    SELECT ?o ?oLabel ?hqLabel ?adminLabel WHERE {
+      ?o wdt:P31/wdt:P279* wd:Q1530022 .
+      ?o wdt:P17 wd:Q17 .
+      ?o wdt:P159 ?hq .
+      OPTIONAL { ?hq wdt:P131* ?admin . ?admin wdt:P31 wd:Q50337 . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    }
+  `;
+  const url = "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query);
+  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/sparql-results+json" } });
+  const data = await res.json();
+  const bindings = data.results?.bindings || [];
+
+  const resolveMuni = (bp, pref, prefMunis) => {
+    if (!pref || !PREF_SET.has(pref) || bp === pref) return null;
+    if (prefMunis.includes(bp)) return bp;
+    if (DC.has(bp)) return bp;
+    if (/区$/.test(bp)) { const ws = prefMunis.filter(m => m === bp); return ws.length ? ws[0] : null; }
+    const w = bp.match(/[^市区町村]+(?:市|町|村|区)$/);
+    if (w && prefMunis.includes(w[0])) return w[0];
+    return null;
+  };
+
+  const counts = new Map();
+  const samples = new Map();
+  const seen = new Set();
+  for (const b of bindings) {
+    const oid = b.o?.value || "";
+    const name = (b.oLabel?.value || "").trim();
+    const bp = (b.hqLabel?.value || "").trim();
+    const pref = (b.adminLabel?.value || "").trim();
+    if (seen.has(oid + "|" + bp)) continue;
+    seen.add(oid + "|" + bp);
+    const muni = resolveMuni(bp, pref, munisByPref.get(pref) || []);
+    if (!muni) continue;
+    const key = `${pref}|${muni}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (!samples.has(key)) samples.set(key, []);
+    if (name && samples.get(key).length < 8) samples.get(key).push(name);
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [religion] ${entries.length} muni entries`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "religion.json"), JSON.stringify(entries));
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "religion_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote religion.json + religion_names.json`);
+}
+
 // ----- Jリーグクラブの本拠地 -----
 async function fetchJLeague() {
   console.log("[jleague]");
@@ -2453,6 +2513,7 @@ const TASKS = {
   yokozuna: fetchYokozuna,
   jleague: fetchJLeague,
   mine: fetchMines,
+  religion: fetchReligion,
 };
 
 const args = process.argv.slice(2);

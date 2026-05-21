@@ -327,6 +327,9 @@ const METRICS = {
   jleague:    { label: "Jリーグ", unit: "クラブ", loader: () => fetchJLeagueData(), ready: true,
     note: "出典: Wikipedia「Jリーグクラブ」カテゴリ各記事のホームタウン — クラブの本拠地自治体に着色",
     footnote: "※J1/J2/J3 のクラブ。1クラブが複数自治体をホームタウンに指定している場合は全てに着色" },
+  religion:   { label: "宗教", unit: "団体", loader: () => fetchReligionData(), ready: true,
+    note: "出典: Wikidata (P31=宗教団体/法人, P17=日本, P159=本部所在地) — 自治体別の宗教団体本部数",
+    footnote: "※カトリック教区/正教会/各仏教宗派/新宗教の本部所在地。Wikidata に登録済みのもののみ" },
   mine:       { label: "鉱山", unit: "件", loader: () => fetchMineData(), ready: true,
     note: "出典: Wikipedia「日本の鉱山の一覧」 — 主要鉱物別に色分け (金=黄, 銅=橙, 銀=灰, 鉄=茶, 石炭=黒, 硫黄=黄緑, その他=グレー)",
     footnote: "※閉山を含む歴代の鉱山。1自治体に複数の鉱山がある場合は最多鉱物で色決定。濃さは件数" },
@@ -614,6 +617,9 @@ async function fetchYokozunaData() {
 }
 async function fetchJLeagueData() {
   return fetchChainStoreData("jleague", "data/jleague.json");
+}
+async function fetchReligionData() {
+  return fetchChainStoreData("religion", "data/religion.json");
 }
 let _mineTypeByCode = new Map();
 let popColorCurrentCode = "";
@@ -1110,6 +1116,14 @@ const METRIC_PALETTES = {
     [0.60, [180, 115,  75]],
     [0.80, [145,  85,  55]],
     [1.00, [ 95,  55,  35]]
+  ],
+  religion: [
+    [0.00, [248, 222, 195]],
+    [0.20, [232, 185, 140]],
+    [0.40, [205, 140,  95]],
+    [0.60, [170, 100,  70]],
+    [0.80, [125,  70,  60]],
+    [1.00, [ 80,  40,  45]]
   ]
 };
 function canonicalEdge(a, b) {
@@ -1217,7 +1231,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "religion" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1290,6 +1304,9 @@ function popColor(pop, minLog, maxLog) {
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "yokozuna") {
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "religion") {
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "jleague") {
@@ -1523,7 +1540,7 @@ async function buildNationalLayer() {
       popColorCurrentCode = code5;
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "airport" || activeMetric === "sake" || activeMetric === "baseball" || activeMetric === "thermal" || activeMetric === "director" || activeMetric === "yokozuna" || activeMetric === "jleague" || activeMetric === "mine" || activeMetric === "religion" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2603,6 +2620,7 @@ const METRIC_CATEGORIES = [
   { name: "文化・産業",     keys: ["restaurant", "sake", "yakimono", "ohsho", "yamaokaya", "rasho"] },
   { name: "スポーツ",       keys: ["baseball", "yokozuna", "jleague"] },
   { name: "文化人",         keys: ["director"] },
+  { name: "宗教",           keys: ["religion"] },
   { name: "安全・事故",     keys: ["traffic", "bear"] }
 ];
 
@@ -2757,7 +2775,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "thermal", "director", "yokozuna", "jleague", "mine", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "airport", "sake", "baseball", "thermal", "director", "yokozuna", "jleague", "mine", "religion", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "baseball") {
