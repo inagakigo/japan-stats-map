@@ -294,6 +294,9 @@ const METRICS = {
   vacancy:    { label: "空き家", unit: "%", loader: () => fetchVacancyRate(), ready: true,
     note: "出典: e-Stat 社会・人口統計体系 (住宅・土地統計調査ベース)",
     footnote: "※住宅総数に対する空き家戸数の割合(空き家率)。別荘・二次的住宅は除外" },
+  traffic:    { label: "交通事故", unit: "件/年", loader: () => fetchTrafficData(), ready: true,
+    note: "出典: e-Stat 社会・人口統計体系 K3101 交通事故発生件数 (2009年度・自治体単位)",
+    footnote: "※年間の交通事故発生件数。多いほど赤。最新公開年は自治体により若干差あり" },
   bear:       { label: "熊出没", unit: "件", loader: () => fetchBearSightings(), ready: true,
     note: "出典: FASTBEAR (警察・自治体公開情報集約) 約44,000件・市町村単位",
     footnote: "※累計件数の統計データ。九州・四国・沖縄はほぼ絶滅で 0 件 / 件数が少ない・0 でも必ず出没しないとは限らないので、登山・山林立ち入り時は引き続き注意" },
@@ -579,6 +582,11 @@ async function fetchBaseballData() {
   // baseballTeam に応じてファイルを切替
   const file = baseballTeam === "all" ? "data/baseball.json" : `data/baseball_${baseballTeam}.json`;
   return fetchChainStoreData(`baseball-${baseballTeam}`, file);
+}
+async function fetchTrafficData() {
+  const res = await fetch("data/traffic.json");
+  if (!res.ok) throw new Error(`traffic HTTP ${res.status}`);
+  return new Map(await res.json());
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -1020,6 +1028,14 @@ const METRIC_PALETTES = {
     [0.75, [165,  25,  35]],
     [0.90, [120,  10,  25]],
     [1.00, [ 75,   0,  15]]
+  ],
+  traffic: [
+    [0.00, [253, 232, 222]],
+    [0.20, [245, 195, 165]],
+    [0.40, [232, 145, 115]],
+    [0.60, [205,  90,  75]],
+    [0.80, [165,  45,  50]],
+    [1.00, [110,  15,  30]]
   ]
 };
 function canonicalEdge(a, b) {
@@ -2472,7 +2488,7 @@ const METRIC_CATEGORIES = [
   { name: "歴史・出来事",   keys: ["earthquake", "airraid", "heisei"] },
   { name: "文化・産業",     keys: ["restaurant", "sake", "yakimono", "ohsho", "yamaokaya", "rasho"] },
   { name: "スポーツ",       keys: ["baseball"] },
-  { name: "動植物・生活",   keys: ["bear"] }
+  { name: "安全・事故",     keys: ["traffic", "bear"] }
 ];
 
 function initMetricSelect() {

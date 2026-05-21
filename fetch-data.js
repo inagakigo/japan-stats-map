@@ -1945,6 +1945,31 @@ async function fetchBaseball() {
   console.log(`  → wrote baseball.json`);
 }
 
+// ----- 交通事故 (e-Stat SSDS K3101 交通事故発生件数) -----
+async function fetchTraffic() {
+  console.log("[traffic]");
+  const url = "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?appId=1f82bb965bfccadf7a37a5654778234ddeec3a73&statsDataId=0000020211&cdCat01=K3101&limit=100000";
+  const json = await (await fetch(url)).json();
+  const vals = json.GET_STATS_DATA?.STATISTICAL_DATA?.DATA_INF?.VALUE || [];
+  const latest = new Map();
+  for (const v of vals) {
+    const area = String(v["@area"] || "");
+    if (!/^\d{5}$/.test(area)) continue;
+    const year = String(v["@time"] || "");
+    const val = Number(v["$"]);
+    if (!isFinite(val) || val < 0) continue;
+    const cur = latest.get(area);
+    if (!cur || year > cur.year) latest.set(area, { year, val });
+  }
+  const map = new Map();
+  for (const [c, info] of latest) map.set(c, info.val);
+  const entries = [...map.entries()];
+  console.log(`  [traffic] ${entries.length} munis`);
+  entries.sort((a, b) => b[1] - a[1]).slice(0, 10).forEach(([c, v]) => console.log(`    ${c}: ${v}`));
+  await fs.writeFile(path.join(OUT, "traffic.json"), JSON.stringify(entries));
+  console.log(`  → wrote traffic.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1997,6 +2022,7 @@ const TASKS = {
   baseball: fetchBaseball,
   baseballTeams: fetchBaseballTeams,
   baseballPlayers: fetchBaseballPlayers,
+  traffic: fetchTraffic,
 };
 
 const args = process.argv.slice(2);
