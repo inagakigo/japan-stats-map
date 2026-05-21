@@ -1084,8 +1084,47 @@ function applyPrefHeatmap() {
     const name = l.feature.properties.nam_ja || l.feature.properties.name_ja || l.feature.properties.name;
     const v = nationalPrefAggregates.get(name);
     if (v && v > 0) {
+      // military / nuclear は内訳から色を決定
+      let fill;
+      if (activeMetric === "military") {
+        const jsdf = nationalPrefAggregates.get(name + "::jsdf") || 0;
+        const us = nationalPrefAggregates.get(name + "::us") || 0;
+        // 米軍が1つでもあれば米軍色、なければ自衛隊色。 濃淡は count(=v) に応じて。
+        const base = us > 0 ? [0, 188, 212] : [214, 40, 40];
+        const ease = Math.min(1, 0.25 + Math.log10(v + 1) / Math.log10(20));
+        const fr = Math.round(255 - (255 - base[0]) * ease);
+        const fg = Math.round(255 - (255 - base[1]) * ease);
+        const fb = Math.round(255 - (255 - base[2]) * ease);
+        fill = `rgb(${fr},${fg},${fb})`;
+      } else if (activeMetric === "nuclear") {
+        const active = nationalPrefAggregates.get(name + "::active") || 0;
+        const cancelled = nationalPrefAggregates.get(name + "::cancelled") || 0;
+        const base = active > 0 ? [214, 40, 40] : [242, 194, 0];
+        const ease = Math.min(1, 0.30 + Math.log10(v + 1) / Math.log10(15));
+        const fr = Math.round(255 - (255 - base[0]) * ease);
+        const fg = Math.round(255 - (255 - base[1]) * ease);
+        const fb = Math.round(255 - (255 - base[2]) * ease);
+        fill = `rgb(${fr},${fg},${fb})`;
+      } else if (["water100","hyakumeizan","dam","airport","park"].includes(activeMetric)) {
+        // 単一状態の二値: 自治体 count に応じて該当色のグラデーション
+        const colorMap = {
+          water100:  [31, 191, 143],
+          hyakumeizan:[46, 157,  74],
+          dam:        [  0, 188, 212],
+          airport:    [  0, 167, 142],
+          park:       [ 29, 111,  60]
+        };
+        const base = colorMap[activeMetric];
+        const ease = Math.min(1, 0.25 + Math.log10(v + 1) / Math.log10(30));
+        const fr = Math.round(255 - (255 - base[0]) * ease);
+        const fg = Math.round(255 - (255 - base[1]) * ease);
+        const fb = Math.round(255 - (255 - base[2]) * ease);
+        fill = `rgb(${fr},${fg},${fb})`;
+      } else {
+        fill = popColor(v, nationalPrefScale.minLog, nationalPrefScale.maxLog);
+      }
       l.setStyle({
-        fillColor: popColor(v, nationalPrefScale.minLog, nationalPrefScale.maxLog),
+        fillColor: fill,
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
@@ -1389,21 +1428,44 @@ async function buildNationalLayer() {
     function computePrefAggregates() {
       // 都道府県別の集計値 (低ズーム時のヒートマップ用)
       const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag";
+      // 二値メトリクス: 値の合計ではなく自治体数で評価したい (military は JSDF/US 個別カウント)
+      const isBinary = ["water100","hyakumeizan","nuclear","dam","military","airport","park"].includes(activeMetric);
       const prefData = new Map();
       for (const info of cityGroup.values()) {
         for (const m of info.members) {
           const v = popMap.get(m.code5);
           if (v == null || !isFinite(v) || (v <= 0 && activeMetric !== "paidBag")) continue;
           const pref = info.prefName;
-          if (!prefData.has(pref)) prefData.set(pref, { sum: 0, count: 0 });
+          if (!prefData.has(pref)) prefData.set(pref, { sum: 0, count: 0, jsdf: 0, us: 0, active: 0, cancelled: 0 });
           const d = prefData.get(pref);
           d.sum += v; d.count++;
+          // military: 1=JSDF, 2=US
+          if (activeMetric === "military") {
+            if (v === 1) d.jsdf++;
+            else if (v === 2) d.us++;
+          }
+          // nuclear: 1=現存, 2=計画中止
+          if (activeMetric === "nuclear") {
+            if (v === 1) d.active++;
+            else if (v === 2) d.cancelled++;
+          }
         }
       }
       nationalPrefAggregates = new Map();
       for (const [pref, d] of prefData) {
         if (d.count === 0) continue;
-        nationalPrefAggregates.set(pref, isAvg ? d.sum / d.count : d.sum);
+        // 二値系は自治体数(count) を集計値として使う
+        const val = isBinary ? d.count : (isAvg ? d.sum / d.count : d.sum);
+        nationalPrefAggregates.set(pref, val);
+        // military / nuclear は内訳も保存
+        if (activeMetric === "military") {
+          nationalPrefAggregates.set(pref + "::jsdf", d.jsdf);
+          nationalPrefAggregates.set(pref + "::us", d.us);
+        }
+        if (activeMetric === "nuclear") {
+          nationalPrefAggregates.set(pref + "::active", d.active);
+          nationalPrefAggregates.set(pref + "::cancelled", d.cancelled);
+        }
       }
       // scale (use same fixed scales as munis for consistency)
       const vals = [...nationalPrefAggregates.values()].filter(v => v > 0);
