@@ -986,7 +986,8 @@ function applyPrefHeatmap() {
   if (!prefLayer) return;
   const z = map.getZoom();
   const lowZoom = z < ZOOM_ALL_THRESHOLD;
-  console.log(`[applyPrefHeatmap] metric=${activeMetric} z=${z} lowZoom=${lowZoom} aggregates=${nationalPrefAggregates.size}`);
+  const samples = [...nationalPrefAggregates.entries()].slice(0, 5).map(([k,v]) => `${k}=${v}`).join(", ");
+  console.log(`[applyPrefHeatmap] metric=${activeMetric} z=${z} lowZoom=${lowZoom} aggregates=${nationalPrefAggregates.size} samples={${samples}} scale=${nationalPrefScale.minLog.toFixed(2)}..${nationalPrefScale.maxLog.toFixed(2)}`);
   prefLayer.eachLayer(l => {
     if (!lowZoom) {
       // 高ズーム時は通常スタイル(透明境界線)
