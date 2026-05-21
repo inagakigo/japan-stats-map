@@ -1412,6 +1412,59 @@ async function fetchYakimono() {
   console.log(`  → wrote yakimono.json`);
 }
 
+// ----- ブランド牛 (Wikipedia「日本のブランド牛一覧」より県別カウント) -----
+// 県単位の指標なので、その県に属する全自治体に同じ値を割当 (popMap の pref 2 桁 fallback を利用)
+async function fetchBrandBeef() {
+  console.log("[brandbeef]");
+  const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%97%A5%E6%9C%AC%E3%81%AE%E3%83%96%E3%83%A9%E3%83%B3%E3%83%89%E7%89%9B%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
+  const json = await (await fetch(url)).json();
+  const wt = json.parse?.wikitext?.["*"] || "";
+  if (!wt) throw new Error("brandbeef wikitext empty");
+
+  // 県セクションごとに bullet (* で始まる行) を数える
+  const sections = wt.split(/^==\s*([^=]+?)\s*==/m);
+  const prefCounts = {}; // pref → count
+  for (let i = 1; i < sections.length; i += 2) {
+    const pref = sections[i].trim();
+    if (!PREF_SET.has(pref)) continue;
+    const body = sections[i + 1];
+    const bullets = (body.match(/^\*\s*\[/gm) || []).length;
+    prefCounts[pref] = bullets;
+  }
+
+  // 各県の自治体 code5 をすべて取得し、その県の brand 数をそれぞれに割当
+  const munisByPref = await getMunisByPref();
+  // muniToPref と prefCode マップが必要。pref 名 → 2 桁コード を topojson から構築。
+  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
+  const topo = JSON.parse(txt);
+  const objKey = Object.keys(topo.objects)[0];
+  const geoms = topo.objects[objKey].geometries || [];
+  const prefToCodes = new Map(); // pref → Set<code5>
+  for (const g of geoms) {
+    const props = g.properties || {};
+    const pref = props.N03_001;
+    const code5 = String(props.N03_007 || "").slice(0, 5);
+    if (!pref || !code5) continue;
+    if (!prefToCodes.has(pref)) prefToCodes.set(pref, new Set());
+    prefToCodes.get(pref).add(code5);
+  }
+
+  // 出力形式: [[code5, count], ...]
+  const entries = [];
+  for (const [pref, count] of Object.entries(prefCounts)) {
+    const codes = prefToCodes.get(pref);
+    if (!codes) continue;
+    for (const c of codes) entries.push([c, count]);
+  }
+  const totalPrefs = Object.keys(prefCounts).length;
+  console.log(`  [brandbeef] ${totalPrefs} prefs, ${entries.length} muni entries`);
+  const sorted = Object.entries(prefCounts).sort((a, b) => b[1] - a[1]);
+  console.log(`  [brandbeef] top 10:`);
+  sorted.slice(0, 10).forEach(([p, c]) => console.log(`    ${p}: ${c}`));
+  await fs.writeFile(path.join(OUT, "brandbeef.json"), JSON.stringify(entries));
+  console.log(`  → wrote brandbeef.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1458,6 +1511,7 @@ const TASKS = {
   yamaokaya: fetchYamaokaya,
   rasho: fetchRamenShop,
   yakimono: fetchYakimono,
+  brandbeef: fetchBrandBeef,
 };
 
 const args = process.argv.slice(2);

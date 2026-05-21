@@ -318,7 +318,10 @@ const METRICS = {
     footnote: "※rasho-db.com に登録の40店舗ベース。完全な記録ではないため、実際には店舗があっても本データに無いことがある(白でも実際にはある可能性あり)" },
   yakimono:   { label: "焼き物", unit: "種", loader: () => fetchYakimonoData(), ready: true,
     note: "出典: やきものプラザ (yakimono-plaza.com) — 各自治体の焼き物の種類数。素焼き色のグラデーション",
-    footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" }
+    footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" },
+  brandbeef:  { label: "ブランド牛", unit: "銘柄", loader: () => fetchBrandBeefData(), ready: true,
+    note: "出典: Wikipedia「日本のブランド牛一覧」 — 県別のブランド牛銘柄数",
+    footnote: "※県単位の指標。県内の全自治体に同じ値を表示。北海道21・岩手8・栃木8・兵庫8・茨城7・秋田6 などが上位" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -522,6 +525,13 @@ async function fetchRashoData() {
 }
 async function fetchYakimonoData() {
   return fetchChainStoreData("yakimono", "data/yakimono.json");
+}
+async function fetchBrandBeefData() {
+  // data/brandbeef.json は [[code5, count], ...] 形式 (各 muni に直接値を割当済)
+  const res = await fetch("data/brandbeef.json");
+  if (!res.ok) throw new Error(`brandbeef HTTP ${res.status}`);
+  const entries = await res.json();
+  return new Map(entries);
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -939,6 +949,14 @@ const METRIC_PALETTES = {
     [0.80, [135,  85,  60]],
     [1.00, [ 95,  55,  40]]
   ],
+  brandbeef: [
+    [0.00, [245, 220, 215]],
+    [0.20, [230, 175, 165]],
+    [0.40, [210, 120, 110]],
+    [0.60, [185,  70,  65]],
+    [0.80, [140,  35,  40]],
+    [1.00, [ 85,  15,  25]]
+  ],
   airraid: [
     [0.00, [255, 245, 240]],
     [0.10, [253, 220, 210]],
@@ -1199,7 +1217,7 @@ async function buildNationalLayer() {
     }
     function recomputeAggregates() {
       // 平均で集計したい指標 (密度系・1人当たり系など加法的でないもの)
-      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy";
+      const isAverageMetric = activeMetric === "density" || activeMetric === "paidBag" || activeMetric === "restaurant" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "brandbeef";
       const allowZero = activeMetric === "paidBag";
       for (const info of cityGroup.values()) {
         let total = 0, any = false, count = 0;
@@ -1293,7 +1311,7 @@ async function buildNationalLayer() {
     }
     function computePrefAggregates() {
       // 都道府県別の集計値 (低ズーム時のヒートマップ用)
-      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag";
+      const isAvg = activeMetric === "density" || activeMetric === "aging" || activeMetric === "rainfall" || activeMetric === "avgAge" || activeMetric === "vacancy" || activeMetric === "restaurant" || activeMetric === "paidBag" || activeMetric === "brandbeef";
       const prefData = new Map();
       for (const info of cityGroup.values()) {
         for (const m of info.members) {
