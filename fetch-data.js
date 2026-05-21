@@ -1203,6 +1203,101 @@ async function fetchOhsho() {
   console.log(`  → wrote ohsho.json`);
 }
 
+// ----- ラーメン山岡家 -----
+async function fetchYamaokaya() {
+  console.log("[yamaokaya]");
+  const munisByPref = await getMunisByPref();
+
+  // 1. メインの店舗一覧から shop ID と所属 pref を取得
+  const idxHtml = await (await fetch("https://www.yamaokaya.com/shops/", {
+    headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" }
+  })).text();
+
+  // 県セクションは h3 で区切られる (h2 はリージョン)
+  // 形式: <h3 class="shops_part_tit"><strong>東北</strong>岩手県 全域</h3>
+  //   または <h3 class="shops_part_tit"><strong>北海道</strong>道東エリア</h3>
+  const sections = idxHtml.split(/<h3[^>]*class="shops_part_tit"[^>]*>([\s\S]*?)<\/h3>/);
+  const shopIds = []; // { id, pref }
+  for (let i = 1; i < sections.length; i += 2) {
+    const headInner = sections[i];
+    // <strong>region</strong>残り
+    const strongM = headInner.match(/<strong>([^<]+)<\/strong>([\s\S]+)/);
+    let region = "", tail = "";
+    if (strongM) { region = strongM[1].trim(); tail = strongM[2].trim(); }
+    else tail = headInner.trim();
+    // region が「北海道」なら pref = 北海道。それ以外は tail の先頭から pref を抽出
+    let pref = null;
+    if (region === "北海道") {
+      pref = "北海道";
+    } else {
+      // tail の先頭から都/道/府/県 名を抽出
+      const pm = tail.match(/^([^\s　]+?(?:都|道|府|県))/);
+      if (pm && PREF_SET.has(pm[1])) pref = pm[1];
+    }
+    if (!pref) continue;
+    const body = sections[i + 1] || "";
+    const ids = [...body.matchAll(/id="s(\d{3,5})"/g)].map(m => m[1]);
+    for (const id of ids) shopIds.push({ id, pref });
+  }
+  console.log(`  [yamaokaya] ${shopIds.length} shops indexed`);
+
+  // 2. 各 shop ページから住所を取得
+  const counts = new Map(); // "pref|muni" → count
+  let processed = 0;
+  for (const { id, pref } of shopIds) {
+    try {
+      const html = await (await fetch(`https://www.yamaokaya.com/shops/${id}/`, {
+        headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" }
+      })).text();
+      // 住所: 「住所</th> <td...> 〒 NNN-NNNN<br> 県名+市町村+...」
+      // 県名は省略されてる場合あり (北見市光西町165 など)
+      const m = html.match(/住所[\s\S]{0,200}?〒\s*\d{3}-?\d{4}<br>\s*([^\n<]+?)</);
+      if (!m) { processed++; continue; }
+      let addr = m[1].trim();
+      // 県名で始まる場合は除去
+      if (addr.startsWith(pref)) addr = addr.slice(pref.length);
+      // 政令市の区 + その他 = 最長マッチ
+      const prefMunis = munisByPref.get(pref) || [];
+      let muni = null;
+      const dcRe = /^(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)(.+?区)/;
+      const dcMatch = addr.match(dcRe);
+      if (dcMatch) {
+        muni = dcMatch[2];
+      } else {
+        for (const candidate of prefMunis) {
+          if (addr.startsWith(candidate)) { muni = candidate; break; }
+        }
+        if (!muni) {
+          const gunMatch = addr.match(/^.+?郡(.+?(?:町|村))/);
+          if (gunMatch) muni = gunMatch[1];
+        }
+      }
+      if (!muni) {
+        if (processed < 5) console.log(`  [yamaokaya] muni 不明: ${pref} | ${addr.slice(0,30)}`);
+      } else {
+        const key = `${pref}|${muni}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    } catch (e) {
+      console.log(`  [yamaokaya] shop ${id} fetch error: ${e.message}`);
+    }
+    processed++;
+    if (processed % 50 === 0) console.log(`  [yamaokaya] ${processed}/${shopIds.length} processed`);
+  }
+
+  const entries = [];
+  for (const [key, count] of counts) {
+    const [pref, muni] = key.split("|");
+    entries.push([pref, muni, count]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [yamaokaya] total: ${entries.length} (pref,muni,count) entries`);
+  console.log(`  [yamaokaya] top 10:`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "yamaokaya.json"), JSON.stringify(entries));
+  console.log(`  → wrote yamaokaya.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1246,6 +1341,7 @@ const TASKS = {
   airraid: fetchAirRaids,
   park: fetchNationalParks,
   ohsho: fetchOhsho,
+  yamaokaya: fetchYamaokaya,
 };
 
 const args = process.argv.slice(2);

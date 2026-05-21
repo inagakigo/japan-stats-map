@@ -308,7 +308,10 @@ const METRICS = {
     footnote: "※34公園+α(2024年時点)。公園区域そのものではなく、公園を含む市町村を緑に塗っている" },
   ohsho:      { label: "餃子の王将", unit: "店", loader: () => fetchOhshoData(), ready: true,
     note: "出典: 王将フードサービス公式店舗一覧 (ohsho.co.jp/shop/) — 少=緑、多=赤 (王将ロゴのグラデーション)",
-    footnote: "※店舗の住所から自治体を抽出して集計。政令市は区単位。東大阪市13・姫路市8・奈良市8・尼崎市7 などが上位" }
+    footnote: "※店舗の住所から自治体を抽出して集計。政令市は区単位。東大阪市13・姫路市8・奈良市8・尼崎市7 などが上位" },
+  yamaokaya:  { label: "山岡家", unit: "店", loader: () => fetchYamaokayaData(), ready: true,
+    note: "出典: ラーメン山岡家公式店舗一覧 (yamaokaya.com/shops/) — 多いほど赤く / 店舗なし=白",
+    footnote: "※全国199店舗の住所から自治体を抽出して集計。北海道発祥のチェーンで道内が圧倒的に多い" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -503,17 +506,20 @@ async function fetchHyakumeizanData() {
 async function fetchParkData() {
   return loadPairListAsBinaryMap("park", "data/park.json");
 }
-async function fetchOhshoData() {
+async function fetchYamaokayaData() {
+  // 王将と同じ集計ロジックを共有
+  return fetchChainStoreData("yamaokaya", "data/yamaokaya.json");
+}
+async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
-  const res = await fetch("data/ohsho.json");
-  if (!res.ok) throw new Error(`ohsho HTTP ${res.status}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${tag} HTTP ${res.status}`);
   const entries = await res.json();
   const map = new Map();
   let matched = 0, missed = 0;
   for (const [pref, muni, count] of entries) {
     const codes = nationalNameLookup(pref, muni);
     if (codes && codes.length) {
-      // 同一 muni 名に複数 code がぶら下がる場合 (西区 など複数の DC ward) は count を等分配
       const per = count / codes.length;
       for (const c of codes) {
         map.set(c, (map.get(c) || 0) + per);
@@ -523,10 +529,12 @@ async function fetchOhshoData() {
       missed++;
     }
   }
-  // 整数化
   for (const [k, v] of map) map.set(k, Math.round(v * 10) / 10);
-  console.log(`[ohsho] matched=${matched} missed=${missed} total=${map.size} muni`);
+  console.log(`[${tag}] matched=${matched} missed=${missed} total=${map.size} muni`);
   return map;
+}
+async function fetchOhshoData() {
+  return fetchChainStoreData("ohsho", "data/ohsho.json");
 }
 async function fetchDamData() {
   return loadPairListAsBinaryMap("dam", "data/dam.json");
@@ -893,6 +901,17 @@ const METRIC_PALETTES = {
     [0.88, [205,  55,  40]],
     [1.00, [165,  20,  30]]
   ],
+  yamaokaya: [
+    [0.00, [255, 245, 240]],
+    [0.10, [253, 220, 200]],
+    [0.20, [250, 185, 160]],
+    [0.30, [245, 145, 115]],
+    [0.45, [232, 100,  85]],
+    [0.60, [210,  60,  55]],
+    [0.75, [180,  30,  35]],
+    [0.88, [135,  15,  25]],
+    [1.00, [ 85,   5,  15]]
+  ],
   airraid: [
     [0.00, [255, 245, 240]],
     [0.10, [253, 220, 210]],
@@ -969,7 +988,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1020,6 +1039,10 @@ function popColor(pop, minLog, maxLog) {
   }
   if (activeMetric === "ohsho") {
     // 王将店舗なし → 白
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "yamaokaya") {
+    // 山岡家店舗なし → 白
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "bear") {
@@ -1200,7 +1223,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2250,7 +2273,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {
