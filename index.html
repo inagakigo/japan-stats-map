@@ -302,7 +302,10 @@ const METRICS = {
     footnote: "※その自治体に何件の旧市町村が編入・新設合併で吸収されたか。新潟市14、上越市13、今治市12、浜松市11など" },
   airraid:    { label: "空襲", unit: "回", loader: () => fetchAirRaidData(), ready: true,
     note: "出典: Yahoo! JAPAN 戦争アーカイブ (wararchive.yahoo.co.jp) — 1944-1945年の空襲被害記録件数。多いほど赤く",
-    footnote: "※自治体ごとの空襲日記録件数。宮崎市31・大分市24・江戸川区22・新宮市20・板橋区19 など\n※完全な記録ではないため、実際には空襲があったが本データに記録されていない自治体もある(白で表示されている場合も実被害があった可能性あり)" }
+    footnote: "※自治体ごとの空襲日記録件数。宮崎市31・大分市24・江戸川区22・新宮市20・板橋区19 など\n※完全な記録ではないため、実際には空襲があったが本データに記録されていない自治体もある(白で表示されている場合も実被害があった可能性あり)" },
+  park:       { label: "国立公園", unit: "", loader: () => fetchParkData(), ready: true,
+    note: "出典: Wikipedia 各国立公園記事の Infobox 地域 + 本文中の市町村言及 — 緑=公園所在 / 白=非該当",
+    footnote: "※34公園+α(2024年時点)。公園区域そのものではなく、公園を含む市町村を緑に塗っている" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -493,6 +496,9 @@ async function fetchWater100Data() {
 }
 async function fetchHyakumeizanData() {
   return loadPairListAsBinaryMap("hyakumeizan", "data/hyakumeizan.json");
+}
+async function fetchParkData() {
+  return loadPairListAsBinaryMap("park", "data/park.json");
 }
 async function fetchDamData() {
   return loadPairListAsBinaryMap("dam", "data/dam.json");
@@ -924,7 +930,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -944,6 +950,10 @@ function popColor(pop, minLog, maxLog) {
   if (activeMetric === "hyakumeizan") {
     // 山が所在する自治体: 緑 / それ以外: 白
     return pop >= 0.5 ? "#2e9d4a" : "#ffffff";
+  }
+  if (activeMetric === "park") {
+    // 国立公園所在: 深緑 / それ以外: 白
+    return pop >= 0.5 ? "#1d6f3c" : "#ffffff";
   }
   if (activeMetric === "nuclear") {
     // 1=現存(赤), 2=計画中止(黄), それ以外=白
@@ -1147,7 +1157,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2194,7 +2204,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {
@@ -2216,6 +2226,13 @@ function updateColorLegend() {
     if (minEl) minEl.textContent = "非該当";
     if (midEl) midEl.textContent = "";
     if (maxEl) maxEl.textContent = "百名山所在";
+    return;
+  }
+  if (activeMetric === "park") {
+    if (bar) bar.style.background = "linear-gradient(to right, #ffffff 0%, #ffffff 50%, #1d6f3c 50%, #1d6f3c 100%)";
+    if (minEl) minEl.textContent = "非該当";
+    if (midEl) midEl.textContent = "";
+    if (maxEl) maxEl.textContent = "国立公園所在";
     return;
   }
   if (activeMetric === "dam") {

@@ -986,6 +986,118 @@ async function fetchAirRaids() {
   console.log(`  → wrote airraid.json`);
 }
 
+// 市町村名 → 所属都道府県 のマップ (cities.topojson から構築)
+let _muniToPref = null;
+async function getMuniToPref() {
+  if (_muniToPref) return _muniToPref;
+  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
+  const topo = JSON.parse(txt);
+  const objKey = Object.keys(topo.objects)[0];
+  const geoms = topo.objects[objKey].geometries || [];
+  _muniToPref = new Map(); // muniName → Set<prefName>
+  for (const g of geoms) {
+    const props = g.properties || {};
+    const pref = props.N03_001;
+    const muni = props.N03_004;
+    if (!pref || !muni) continue;
+    if (!_muniToPref.has(muni)) _muniToPref.set(muni, new Set());
+    _muniToPref.get(muni).add(pref);
+  }
+  console.log(`  [muniToPref] built: ${_muniToPref.size} muni names`);
+  return _muniToPref;
+}
+
+// ----- 国立公園 -----
+async function fetchNationalParks() {
+  console.log("[park]");
+  const muniToPref = await getMuniToPref();
+  // カテゴリ「日本の国立公園」のページを取得
+  const catUrl = "https://ja.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:%E6%97%A5%E6%9C%AC%E3%81%AE%E5%9B%BD%E7%AB%8B%E5%85%AC%E5%9C%92&cmlimit=200&cmtype=page&format=json";
+  const catJson = await (await fetch(catUrl)).json();
+  const members = (catJson.query?.categorymembers || [])
+    .map(x => x.title)
+    .filter(t => /国立公園$/.test(t));  // 「日本の国立公園」「Template:...」「海域公園」を除外
+  console.log(`  [park] ${members.length} park articles`);
+
+  const allPairs = [];
+  for (let i = 0; i < members.length; i += 15) {
+    const batch = members.slice(i, i + 15);
+    const url = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    const json = await (await fetch(url)).json();
+    const pages = json.query?.pages || [];
+    for (const p of pages) {
+      const wt = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!wt) continue;
+
+      // (1) Infobox 「地域」から、この公園がまたがる都道府県のセットを取得
+      let regionBlock = "";
+      for (const f of ["地域", "所在地", "位置"]) {
+        const m = wt.match(new RegExp(`\\|\\s*${f}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\|\\s*\\w|\\n\\}\\})`));
+        if (m) regionBlock += "\n" + m[1];
+      }
+      const parkPrefs = new Set();
+      const prefLinkRe = /\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]/g;
+      let pm;
+      while ((pm = prefLinkRe.exec(regionBlock))) {
+        const name = pm[1].trim().replace(/\s*\([^)]*\)\s*$/, "");
+        if (PREF_SET.has(name)) parkPrefs.add(name);
+      }
+      // 県リンクが取れない場合(北海道の振興局表記など): 地域フィールド内の muni 候補から県を推定
+      if (parkPrefs.size === 0) {
+        const muniLinkRe0 = /\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/g;
+        let mm0;
+        while ((mm0 = muniLinkRe0.exec(regionBlock))) {
+          const name = mm0[1].trim().replace(/\s*\([^)]*\)\s*$/, "");
+          const candPrefs = muniToPref.get(name);
+          if (!candPrefs) continue;
+          for (const pr of candPrefs) parkPrefs.add(pr);
+        }
+      }
+      if (parkPrefs.size === 0) {
+        console.log(`  [park] ${p.title}: 県セット取れず → スキップ`);
+        continue;
+      }
+
+      // (2) 「事務所所在地」フィールドのテキストを除外した本文を作る
+      // 事務所所在地は通常 Infobox 内なので、その field block だけ除外
+      let cleanedWt = wt.replace(/\|\s*事務所所在地\s*=\s*[\s\S]*?(?=\n\s*\|\s*\w|\n\}\})/g, "");
+
+      // (3) 本文全体から [[市町村]] リンクを収集し、parkPrefs に属するものだけ採用
+      const muniLinkRe = /\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/g;
+      let mm;
+      const seen = new Set();
+      while ((mm = muniLinkRe.exec(cleanedWt))) {
+        const name = mm[1].trim().replace(/\s*\([^)]*\)\s*$/, "");
+        if (!/(市|町|村)$/.test(name)) continue;
+        const candidatePrefs = muniToPref.get(name);
+        if (!candidatePrefs) continue;
+        // この自治体が属しうる県が parkPrefs と重なるかチェック
+        for (const pr of candidatePrefs) {
+          if (parkPrefs.has(pr)) {
+            const k = `${pr}|${name}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            allPairs.push([pr, name, p.title]);
+          }
+        }
+      }
+    }
+  }
+
+  // ユニーク化 (pref|muni)
+  const seen = new Set();
+  const uniq = [];
+  for (const [pr, c] of allPairs) {
+    const k = `${pr}|${c}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniq.push([pr, c]);
+  }
+  console.log(`  [park] extracted ${allPairs.length} pairs, ${uniq.length} unique muni`);
+  await fs.writeFile(path.join(OUT, "park.json"), JSON.stringify(uniq));
+  console.log(`  → wrote park.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1027,6 +1139,7 @@ const TASKS = {
   military: fetchMilitaryBases,
   heisei: fetchHeiseiMergers,
   airraid: fetchAirRaids,
+  park: fetchNationalParks,
 };
 
 const args = process.argv.slice(2);
