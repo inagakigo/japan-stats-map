@@ -1970,6 +1970,149 @@ async function fetchTraffic() {
   console.log(`  → wrote traffic.json`);
 }
 
+// ----- 映画監督 (Wikidata 出生地) -----
+async function fetchDirector() {
+  console.log("[director]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+
+  const query = `
+    SELECT ?p ?pLabel ?bpLabel ?adminLabel ?sl WHERE {
+      ?p wdt:P106 wd:Q2526255 ;
+         wdt:P27 wd:Q17 ;
+         wdt:P19 ?bp ;
+         wikibase:sitelinks ?sl .
+      OPTIONAL { ?bp wdt:P131* ?admin . ?admin wdt:P31 wd:Q50337 . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    }
+    ORDER BY DESC(?sl)
+  `;
+  const url = "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query);
+  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/sparql-results+json" } });
+  const data = await res.json();
+  const bindings = data.results?.bindings || [];
+
+  const resolveMuni = (bp, pref, prefMunis) => {
+    if (!pref || !PREF_SET.has(pref) || bp === pref) return null;
+    if (prefMunis.includes(bp)) return bp;
+    if (DC.has(bp)) return bp;
+    if (/区$/.test(bp)) { const ws = prefMunis.filter(m => m === bp); return ws.length ? ws[0] : null; }
+    const w = bp.match(/[^市区町村]+(?:市|町|村|区)$/);
+    if (w && prefMunis.includes(w[0])) return w[0];
+    return null;
+  };
+
+  const counts = new Map();
+  const samples = new Map(); // muni → top names
+  const seen = new Set();
+  for (const b of bindings) {
+    const pid = b.p?.value || "";
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    const name = (b.pLabel?.value || "").trim();
+    if (!name || /^Q\d+$/.test(name)) continue;
+    const bp = (b.bpLabel?.value || "").trim();
+    const pref = (b.adminLabel?.value || "").trim();
+    const muni = resolveMuni(bp, pref, munisByPref.get(pref) || []);
+    if (!muni) continue;
+    const key = `${pref}|${muni}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (!samples.has(key)) samples.set(key, []);
+    if (samples.get(key).length < 8) samples.get(key).push(name);
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [director] ${entries.length} muni entries`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "director.json"), JSON.stringify(entries));
+  // 自治体ごとの代表監督
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "director_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote director.json + director_names.json`);
+}
+
+// ----- 横綱 (Wikipedia 横綱一覧 → 各記事の出身地) -----
+async function fetchYokozuna() {
+  console.log("[yokozuna]");
+  const munisByPref = await getMunisByPref();
+  const UA = "japan-stats-map/1.0 (https://github.com/inagakigo/japan-stats-map)";
+  const DC = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+
+  // 1. 横綱一覧から横綱の Wikipedia 記事名を抽出
+  const listUrl = "https://ja.wikipedia.org/w/api.php?action=parse&page=%E6%A8%AA%E7%B6%B1%E4%B8%80%E8%A6%A7&format=json&prop=wikitext";
+  const listJson = await (await fetch(listUrl, { headers: { "User-Agent": UA } })).json();
+  const wt = listJson.parse?.wikitext?.["*"] || "";
+  const titles = [];
+  // font-size:125%; 内の [[link]] が横綱記事
+  for (const m of wt.matchAll(/font-size:125%[^>]*>\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g)) {
+    if (!titles.includes(m[1])) titles.push(m[1]);
+  }
+  console.log(`  [yokozuna] ${titles.length} yokozuna articles`);
+
+  // 2. 各記事の Infobox から出身地を取得
+  const counts = new Map();
+  const samples = new Map();
+  for (let i = 0; i < titles.length; i += 30) {
+    const batch = titles.slice(i, i + 30);
+    const u = `https://ja.wikipedia.org/w/api.php?action=query&prop=revisions&titles=${encodeURIComponent(batch.join("|"))}&rvprop=content&rvslots=main&format=json&formatversion=2&redirects=1`;
+    let j;
+    try {
+      const res = await fetch(u, { headers: { "User-Agent": UA } });
+      j = JSON.parse(await res.text());
+    } catch (e) { console.log(`  [yokozuna] batch ${i}: ${e.message}`); continue; }
+    const pages = j.query?.pages || [];
+    for (const p of pages) {
+      const w = p.revisions?.[0]?.slots?.main?.content || "";
+      if (!w || p.missing) continue;
+      // 出身 / 出身地 / 生まれ フィールド
+      let block = "";
+      for (const f of ["出身", "出身地", "本名"]) {
+        const re = new RegExp(`\\|\\s*${f}\\s*=\\s*([\\s\\S]*?)(?=\\n\\s*\\|\\s*\\w|\\n\\}\\})`);
+        const m = w.match(re);
+        if (m && m[1].trim()) { block += "\n" + m[1]; }
+      }
+      // body intro も追加 (Infobox 不完全な記事用)
+      const idx = w.search(/\n\}\}\s*\n/);
+      if (idx > 0) block += "\n" + w.slice(idx, idx + 1500);
+      // [[県]] と [[市町村]] を順に検出
+      const re = /\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]\s*(?:\[\[[^\]|]+?郡(?:\|[^\]]+)?\]\])?\s*\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/;
+      const m2 = block.match(re);
+      let pref = null, muni = null;
+      if (m2) {
+        pref = m2[1].replace(/\s*\([^)]*\)\s*$/, "");
+        const muniRaw = m2[2].replace(/\s*\([^)]*\)\s*$/, "");
+        const prefMunis = munisByPref.get(pref) || [];
+        if (DC.has(muniRaw)) {
+          // 続く区を探す
+          const after = block.slice(block.indexOf(m2[0]) + m2[0].length, block.indexOf(m2[0]) + m2[0].length + 60);
+          const wm = after.match(/^\s*\[\[(?:[^\]|]+?\|)?([^\]|]+?区)\]\]/);
+          muni = wm ? wm[1] : muniRaw;
+        } else if (prefMunis.includes(muniRaw)) {
+          muni = muniRaw;
+        }
+      }
+      if (!pref || !muni || !PREF_SET.has(pref)) continue;
+      const key = `${pref}|${muni}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      if (!samples.has(key)) samples.set(key, []);
+      if (samples.get(key).length < 5) samples.get(key).push(p.title);
+    }
+  }
+  const entries = [];
+  for (const [k, c] of counts) { const [pref, muni] = k.split("|"); entries.push([pref, muni, c]); }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [yokozuna] ${entries.length} muni entries`);
+  entries.slice(0, 15).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "yokozuna.json"), JSON.stringify(entries));
+  const samplesOut = {};
+  for (const [k, list] of samples) samplesOut[k] = list;
+  await fs.writeFile(path.join(OUT, "yokozuna_names.json"), JSON.stringify(samplesOut));
+  console.log(`  → wrote yokozuna.json + yokozuna_names.json`);
+}
+
 // ----- 火力発電所 (Wikipedia 日本の火力発電所一覧) -----
 async function fetchThermal() {
   console.log("[thermal]");
@@ -2085,6 +2228,8 @@ const TASKS = {
   baseballPlayers: fetchBaseballPlayers,
   traffic: fetchTraffic,
   thermal: fetchThermal,
+  director: fetchDirector,
+  yokozuna: fetchYokozuna,
 };
 
 const args = process.argv.slice(2);
