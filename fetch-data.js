@@ -1615,48 +1615,64 @@ async function fetchBrandBeef() {
     for (const p of pages) {
       const w = p.revisions?.[0]?.slots?.main?.content || "";
       if (!w || p.missing) continue;
-      const intro = w.slice(0, 3000);
-      const brandTitle = p.title; // 例: 米沢牛, 松阪牛, 神戸ビーフ
-      // ステップ1: [[県]][[市/町/村]] パターン
-      const re = /\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]\s*(?:\[\[[^\]|]+?郡(?:\|[^\]]+)?\]\])?\s*\[\[([^\]|]+?(?:市|町|村))(?:\|[^\]]+)?\]\]/g;
-      let pm;
-      let found = false;
-      while (!found && (pm = re.exec(intro))) {
-        const pref = pm[1].replace(/\s*\([^)]*\)\s*$/, "");
-        const muniRaw = pm[2].replace(/\s*\([^)]*\)\s*$/, "");
-        if (!PREF_SET.has(pref)) continue;
-        const prefMunis = munisByPref.get(pref) || [];
-        let muni = muniRaw;
-        if (DC.includes(muniRaw)) {
-          const wardAfter = intro.slice(pm.index + pm[0].length, pm.index + pm[0].length + 60);
-          const wm = wardAfter.match(/^\s*\[\[(?:[^\]|]+?\|)?([^\]|]+?区)\]\]/);
-          if (wm) muni = wm[1];
-        }
-        if (!prefMunis.includes(muni)) continue;
-        counts.set(`${pref}|${muni}`, (counts.get(`${pref}|${muni}`) || 0) + 1);
-        found = true;
-      }
-      if (found) continue;
+      const brandTitle = p.title;
 
-      // ステップ2: 銘柄名から muni 推測。最初に見つかった県の muni リストから、銘柄名に含まれる muni を探す
-      const prefM = intro.match(/\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]/);
+      // 記事全体から県名と自治体名を抽出し、銘柄に紐づく自治体を集める
+      // (1) 記事の最初に出てくる県を「銘柄の主県」とする
+      const prefM = w.match(/\[\[([^\]|]+?(?:都|道|府|県))(?:\|[^\]]+)?\]\]/);
       if (!prefM) continue;
       const pref = prefM[1].replace(/\s*\([^)]*\)\s*$/, "");
       if (!PREF_SET.has(pref)) continue;
       const prefMunis = munisByPref.get(pref) || [];
-      // 銘柄名から「XX牛」「XXビーフ」を切り取った地名部分
-      const brandStem = brandTitle.replace(/(牛|ビーフ|和牛|黒毛|あか牛|赤牛|短角牛)$/g, "").replace(/^(特産|くまもと)/, "");
-      // brandStem を含む muni を探す (最長マッチ)
-      let bestMuni = null;
-      for (const cand of [...prefMunis].sort((a, b) => b.length - a.length)) {
-        const candStem = cand.replace(/(市|町|村|区)$/, "");
-        if (brandStem.includes(candStem) || candStem.includes(brandStem)) {
-          bestMuni = cand;
-          break;
+
+      // (2) 銘柄に紐づく自治体集合を作る:
+      //   a. ピリオド付き wiki link 「[[県]]...[[市/町/村]]」を拾う
+      //   b. プレーンテキストで「○○市・XX町・YY村」のように列挙されているもの (列挙パターン)
+      //   c. 銘柄名から自治体推測 (米沢牛→米沢市など)
+      const muniSet = new Set();
+
+      // 2a: wiki link パターン
+      const linkRe = /\[\[(?:[^\]|]+?\|)?([^\]|]+?(?:市|町|村|区))\]\]/g;
+      let lm;
+      while ((lm = linkRe.exec(w.slice(0, 8000)))) {
+        const cand = lm[1].replace(/\s*\([^)]*\)\s*$/, "");
+        if (prefMunis.includes(cand)) muniSet.add(cand);
+      }
+
+      // 2b: プレーンテキスト列挙 (「米沢市・長井市・南陽市・…」)
+      // 県名以降のテキストから「XX市」「YY町」「ZZ村」を拾う
+      const afterPref = w.slice(w.indexOf(prefM[0]) + prefM[0].length, w.indexOf(prefM[0]) + 8000);
+      const plainRe = /([　-龯々ヵヶ・ー]{1,8}(?:市|町|村))(?=[・、，,]|$|\s)/g;
+      let mp;
+      while ((mp = plainRe.exec(afterPref))) {
+        const cand = mp[1];
+        if (prefMunis.includes(cand)) muniSet.add(cand);
+      }
+
+      // 2c: 銘柄名から推測
+      if (muniSet.size === 0) {
+        const brandStem = brandTitle.replace(/(牛|ビーフ|和牛|黒毛|あか牛|赤牛|短角牛)$/g, "").replace(/^(特産|くまもと)/, "");
+        for (const cand of [...prefMunis].sort((a, b) => b.length - a.length)) {
+          const candStem = cand.replace(/(市|町|村|区)$/, "");
+          if (candStem.length >= 2 && (brandStem.includes(candStem) || candStem.includes(brandStem))) {
+            muniSet.add(cand);
+            break;
+          }
         }
       }
-      if (bestMuni) {
-        counts.set(`${pref}|${bestMuni}`, (counts.get(`${pref}|${bestMuni}`) || 0) + 1);
+
+      // それでも 0 件なら、文中で最初に登場する pref 内の muni を採用 (フォールバック)
+      if (muniSet.size === 0) {
+        const fbRe = /([　-龯々ヵヶ・ー]{1,8}(?:市|町|村|区))/g;
+        let mm;
+        while ((mm = fbRe.exec(afterPref.slice(0, 1500)))) {
+          if (prefMunis.includes(mm[1])) { muniSet.add(mm[1]); break; }
+        }
+      }
+
+      for (const muni of muniSet) {
+        const key = `${pref}|${muni}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
       }
     }
   }
