@@ -1098,6 +1098,111 @@ async function fetchNationalParks() {
   console.log(`  → wrote park.json`);
 }
 
+// 各都道府県の自治体名リスト (cities.topojson から構築、N03_004 ベース)
+// 政令市の親市名 (横浜市など) も含む
+async function getMunisByPref() {
+  const txt = await fs.readFile(path.join(OUT, "cities.topojson"), "utf8");
+  const topo = JSON.parse(txt);
+  const objKey = Object.keys(topo.objects)[0];
+  const geoms = topo.objects[objKey].geometries || [];
+  const byPref = new Map(); // pref → Set<muni name>
+  const dcSet = new Set(["札幌市","仙台市","さいたま市","千葉市","横浜市","川崎市","相模原市","新潟市","静岡市","浜松市","名古屋市","京都市","大阪市","堺市","神戸市","岡山市","広島市","北九州市","福岡市","熊本市"]);
+  for (const g of geoms) {
+    const props = g.properties || {};
+    const pref = props.N03_001, muni = props.N03_004, parent = props.N03_003;
+    if (!pref || !muni) continue;
+    if (!byPref.has(pref)) byPref.set(pref, new Set());
+    byPref.get(pref).add(muni);
+    if (parent && dcSet.has(parent)) byPref.get(pref).add(parent);
+  }
+  // 長い名前順にソート (最長マッチ用)
+  const sorted = new Map();
+  for (const [p, set] of byPref) {
+    sorted.set(p, [...set].sort((a, b) => b.length - a.length));
+  }
+  return sorted;
+}
+
+// ----- 餃子の王将 (店舗数/自治体) -----
+async function fetchOhsho() {
+  console.log("[ohsho]");
+  const munisByPref = await getMunisByPref();
+  // 各都道府県の URL は緯度経度パラメータ付き — 王将トップページから抽出
+  const indexHtml = await (await fetch("https://www.ohsho.co.jp/shop/", {
+    headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" }
+  })).text();
+  // <a href="https://map.ohsho.co.jp/b/ohsho/?t=prefectures&...">県名</a>
+  const prefLinks = [...indexHtml.matchAll(/href="(https:\/\/map\.ohsho\.co\.jp\/b\/ohsho\/\?t=prefectures&[^"]+)">([^<]+)<\/a>/g)];
+  console.log(`  [ohsho] ${prefLinks.length} pref links`);
+
+  // 自治体ごとの店舗数を集計
+  const counts = new Map(); // "pref|muni" → count
+  for (const [, url, prefName] of prefLinks) {
+    const cleanPref = prefName.trim();
+    if (!PREF_SET.has(cleanPref)) continue;
+    let html;
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" } });
+      html = await res.text();
+    } catch (e) {
+      console.log(`  [ohsho] ${cleanPref}: fetch error`);
+      continue;
+    }
+    // 住所抽出: 〒XXX-XXXX 都道府県... のパターン
+    // pref 名のすぐ後に 市/区(独立)/町/村 が来る
+    // ・政令市: 「横浜市鶴見区」 → muni = 鶴見区
+    // ・通常市: 「厚木市」 → muni = 厚木市
+    // ・郡部町村: 「足柄上郡松田町」 → muni = 松田町
+    const prefMunis = munisByPref.get(cleanPref) || [];
+    // 住所先頭: 「〒XXX-XXXX 大阪府大阪市福島区野田4-...」「神奈川県厚木市本厚木...」など。
+    // pref 名直後の地名部分(漢字/かな のみ)を捕捉
+    const addrRe = new RegExp(`〒\\d{3}-?\\d{4}[\\s　]*${cleanPref}([\\u3000-\\u9faf々ヵヶ・ー]+)`, "g");
+    let shopsInPref = 0;
+    let m;
+    while ((m = addrRe.exec(html))) {
+      const after = m[1]; // pref 名以降の地名
+      // 政令市親 + 区: 「横浜市鶴見区」など先に試す
+      // for each muni in prefMunis (longest first), check if `after` startsWith it
+      // — DC ward の場合 親市+区 が含まれるので、まず親市マッチを試し、次に区を取る
+      let muni = null;
+      // step 1: 政令市の親市名 (横浜市 etc.) で startsWith かチェック → 直後の 「XX区」 を muni に
+      const dcRe = /^(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)(.+?区)/;
+      const dcMatch = after.match(dcRe);
+      if (dcMatch) {
+        muni = dcMatch[2];
+      } else {
+        // step 2: pref のあらゆる muni 名で最長マッチ
+        // ただし「四日市市」のように 市/町/村 が複数連続する名前も正しく取れるよう、known list で検索
+        for (const candidate of prefMunis) {
+          if (after.startsWith(candidate)) { muni = candidate; break; }
+        }
+        // step 3: 郡部の「○○郡XX町」フォールバック (topojson に未収録のケース)
+        if (!muni) {
+          const gunMatch = after.match(/^.+?郡(.+?(?:町|村))/);
+          if (gunMatch) muni = gunMatch[1];
+        }
+      }
+      if (!muni) continue;
+      const key = `${cleanPref}|${muni}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      shopsInPref++;
+    }
+    console.log(`  [ohsho] ${cleanPref}: ${shopsInPref} 店`);
+  }
+
+  const entries = [];
+  for (const [key, count] of counts) {
+    const [pref, muni] = key.split("|");
+    entries.push([pref, muni, count]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [ohsho] total: ${entries.length} (pref,muni,count) entries`);
+  console.log(`  [ohsho] top 10:`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "ohsho.json"), JSON.stringify(entries));
+  console.log(`  → wrote ohsho.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1140,6 +1245,7 @@ const TASKS = {
   heisei: fetchHeiseiMergers,
   airraid: fetchAirRaids,
   park: fetchNationalParks,
+  ohsho: fetchOhsho,
 };
 
 const args = process.argv.slice(2);

@@ -305,7 +305,10 @@ const METRICS = {
     footnote: "※自治体ごとの空襲日記録件数。宮崎市31・大分市24・江戸川区22・新宮市20・板橋区19 など\n※完全な記録ではないため、実際には空襲があったが本データに記録されていない自治体もある(白で表示されている場合も実被害があった可能性あり)" },
   park:       { label: "国立公園", unit: "", loader: () => fetchParkData(), ready: true,
     note: "出典: Wikipedia 各国立公園記事の Infobox 地域 + 本文中の市町村言及 — 緑=公園所在 / 白=非該当",
-    footnote: "※34公園+α(2024年時点)。公園区域そのものではなく、公園を含む市町村を緑に塗っている" }
+    footnote: "※34公園+α(2024年時点)。公園区域そのものではなく、公園を含む市町村を緑に塗っている" },
+  ohsho:      { label: "餃子の王将", unit: "店", loader: () => fetchOhshoData(), ready: true,
+    note: "出典: 王将フードサービス公式店舗一覧 (ohsho.co.jp/shop/) — 少=緑、多=赤 (王将ロゴのグラデーション)",
+    footnote: "※店舗の住所から自治体を抽出して集計。政令市は区単位。東大阪市13・姫路市8・奈良市8・尼崎市7 などが上位" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -499,6 +502,31 @@ async function fetchHyakumeizanData() {
 }
 async function fetchParkData() {
   return loadPairListAsBinaryMap("park", "data/park.json");
+}
+async function fetchOhshoData() {
+  if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
+  const res = await fetch("data/ohsho.json");
+  if (!res.ok) throw new Error(`ohsho HTTP ${res.status}`);
+  const entries = await res.json();
+  const map = new Map();
+  let matched = 0, missed = 0;
+  for (const [pref, muni, count] of entries) {
+    const codes = nationalNameLookup(pref, muni);
+    if (codes && codes.length) {
+      // 同一 muni 名に複数 code がぶら下がる場合 (西区 など複数の DC ward) は count を等分配
+      const per = count / codes.length;
+      for (const c of codes) {
+        map.set(c, (map.get(c) || 0) + per);
+      }
+      matched++;
+    } else {
+      missed++;
+    }
+  }
+  // 整数化
+  for (const [k, v] of map) map.set(k, Math.round(v * 10) / 10);
+  console.log(`[ohsho] matched=${matched} missed=${missed} total=${map.size} muni`);
+  return map;
 }
 async function fetchDamData() {
   return loadPairListAsBinaryMap("dam", "data/dam.json");
@@ -844,15 +872,26 @@ const METRIC_PALETTES = {
     [1.00, [ 45,  10,  78]]
   ],
   heisei: [
-    [0.00, [252, 248, 232]],
-    [0.10, [248, 232, 195]],
-    [0.20, [244, 210, 150]],
-    [0.30, [238, 178, 110]],
-    [0.45, [225, 140,  80]],
-    [0.60, [200, 100,  60]],
-    [0.75, [165,  70,  45]],
-    [0.88, [125,  45,  35]],
-    [1.00, [ 80,  25,  20]]
+    [0.00, [250, 240, 250]],
+    [0.10, [228, 200, 240]],
+    [0.20, [205, 165, 230]],
+    [0.30, [180, 120, 215]],
+    [0.45, [165,  80, 190]],
+    [0.60, [180,  55, 145]],
+    [0.75, [195,  40,  90]],
+    [0.88, [175,  25,  55]],
+    [1.00, [120,  10,  35]]
+  ],
+  ohsho: [
+    [0.00, [245, 255, 240]],
+    [0.10, [215, 240, 175]],
+    [0.20, [180, 220, 110]],
+    [0.30, [220, 220,  80]],
+    [0.45, [240, 200,  60]],
+    [0.60, [240, 160,  40]],
+    [0.75, [230, 110,  40]],
+    [0.88, [205,  55,  40]],
+    [1.00, [165,  20,  30]]
   ],
   airraid: [
     [0.00, [255, 245, 240]],
@@ -930,7 +969,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -977,6 +1016,10 @@ function popColor(pop, minLog, maxLog) {
   }
   if (activeMetric === "airraid") {
     // 空襲記録なし → 白
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "ohsho") {
+    // 王将店舗なし → 白
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "bear") {
@@ -1157,7 +1200,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -1585,10 +1628,13 @@ function onMoveEnd() {
     // 低ズームでもバックグラウンドで市区町村データを読み込む
     // → buildNationalLayer 内で computePrefAggregates → applyPrefHeatmap が走るので県別ヒートマップが反映される
     if (!cityLayer && !nationalLoading) {
+      const initialMetric = activeMetric; // ロード開始時の指標を覚えておく
       nationalLoading = buildNationalLayer().then(layer => {
         cityLayer = layer; // 高ズームになったときに onMoveEnd が addLayer する
         updateColorLegend();
         preloadAllMetrics();
+        // ビルド中にユーザーが別の指標に切り替えていたら、ここで再適用
+        if (activeMetric !== initialMetric) switchMetric(activeMetric);
       }).catch(e => {
         console.warn("buildNationalLayer failed:", e.message);
       });
@@ -2204,7 +2250,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {
