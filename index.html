@@ -8,7 +8,15 @@
 <style>
   html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif; }
   #app { display: flex; height: 100vh; }
-  #map { flex: 1; background: #1f6fb8; outline: none; min-width: 0; min-height: 0; }
+  #map {
+    flex: 1; outline: none; min-width: 0; min-height: 0;
+    background-color: #1f6fb8;
+    background-image:
+      radial-gradient(rgba(255,255,255,0.22) 1.2px, transparent 1.5px),
+      radial-gradient(rgba(255,255,255,0.14) 1.2px, transparent 1.5px);
+    background-size: 8px 8px, 8px 8px;
+    background-position: 0 0, 4px 4px;
+  }
   #map:focus, .leaflet-container:focus, .leaflet-interactive:focus { outline: none !important; }
   .leaflet-zoom-box { display: none !important; }
   #panel {
@@ -107,15 +115,6 @@
   .pref { stroke: #5b8db8; stroke-width: 0.7; cursor: pointer; transition: fill 0.15s; }
   /* fill は Leaflet の setStyle (fillColor) で動的に設定 — CSS で書くと SVG fill 属性を上書きしてヒートマップが効かない */
   .pref:hover { fill: #9ec3e0; }
-  /* 海部分 (leaflet container 背景) にハーフトーンのドット模様 */
-  .leaflet-container {
-    background: #1f6fb8;
-    background-image:
-      radial-gradient(rgba(255,255,255,0.18) 1.2px, transparent 1.4px),
-      radial-gradient(rgba(255,255,255,0.12) 1.2px, transparent 1.4px);
-    background-size: 8px 8px, 8px 8px;
-    background-position: 0 0, 4px 4px;
-  }
   #baseball-teams {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
