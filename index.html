@@ -315,7 +315,10 @@ const METRICS = {
     footnote: "※全国199店舗の住所から自治体を抽出して集計。北海道発祥のチェーンで道内が圧倒的に多い" },
   rasho:      { label: "ラーメンショップ", unit: "店", loader: () => fetchRashoData(), ready: true,
     note: "出典: rasho-db.com (有志による集約サイト) — 多いほど赤く / 店舗なし=白",
-    footnote: "※rasho-db.com に登録の40店舗ベース。完全な記録ではないため、実際には店舗があっても本データに無いことがある(白でも実際にはある可能性あり)" }
+    footnote: "※rasho-db.com に登録の40店舗ベース。完全な記録ではないため、実際には店舗があっても本データに無いことがある(白でも実際にはある可能性あり)" },
+  yakimono:   { label: "焼き物", unit: "種", loader: () => fetchYakimonoData(), ready: true,
+    note: "出典: やきものプラザ (yakimono-plaza.com) — 各自治体の焼き物の種類数。素焼き色のグラデーション",
+    footnote: "※名古屋7・京都6・那覇6・弘前5・和歌山5・松江5・武雄5 などが上位。江戸時代以降の主要な伝統焼き物産地" }
 };
 let activeMetric = "population";
 const metricDataCache = new Map();
@@ -516,6 +519,9 @@ async function fetchYamaokayaData() {
 }
 async function fetchRashoData() {
   return fetchChainStoreData("rasho", "data/rasho.json");
+}
+async function fetchYakimonoData() {
+  return fetchChainStoreData("yakimono", "data/yakimono.json");
 }
 async function fetchChainStoreData(tag, url) {
   if (!nationalNameLookup) throw new Error("ポリゴンデータ未ロード");
@@ -925,6 +931,14 @@ const METRIC_PALETTES = {
     [0.90, [120,  10,  25]],
     [1.00, [ 75,   0,  15]]
   ],
+  yakimono: [
+    [0.00, [238, 220, 195]],
+    [0.20, [220, 185, 145]],
+    [0.40, [195, 145, 105]],
+    [0.60, [170, 110,  75]],
+    [0.80, [135,  85,  60]],
+    [1.00, [ 95,  55,  40]]
+  ],
   airraid: [
     [0.00, [255, 245, 240]],
     [0.10, [253, 220, 210]],
@@ -1003,7 +1017,7 @@ function applyPrefHeatmap() {
         fillOpacity: 0.85,
         color: "#5b8db8", weight: 0.7
       });
-    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "aging" || activeMetric === "bear") {
+    } else if (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "aging" || activeMetric === "bear") {
       // 非該当県は白で表示
       l.setStyle({ fillColor: "#ffffff", fillOpacity: 0.9, color: "#5b8db8", weight: 0.7 });
     } else {
@@ -1062,6 +1076,10 @@ function popColor(pop, minLog, maxLog) {
   }
   if (activeMetric === "rasho") {
     // ラーメンショップなし → 白
+    if (!pop || pop <= 0) return "#ffffff";
+  }
+  if (activeMetric === "yakimono") {
+    // 焼き物なし → 白
     if (!pop || pop <= 0) return "#ffffff";
   }
   if (activeMetric === "bear") {
@@ -1242,7 +1260,7 @@ async function buildNationalLayer() {
       else pop = popMap.get(String(feature.properties.N03_007 || "").slice(0, 5));
       const hasData = activeMetric === "paidBag"
         ? (pop === 0 || pop === 1)
-        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "aging" || activeMetric === "bear")
+        : (activeMetric === "water100" || activeMetric === "hyakumeizan" || activeMetric === "nuclear" || activeMetric === "dam" || activeMetric === "military" || activeMetric === "heisei" || activeMetric === "airraid" || activeMetric === "park" || activeMetric === "ohsho" || activeMetric === "yamaokaya" || activeMetric === "rasho" || activeMetric === "yakimono" || activeMetric === "aging" || activeMetric === "bear")
         ? true  // 非該当 (undefined / 50%未満) も白で常に表示
         : !!(pop && pop > 0);
       const noDataColor = "#111";
@@ -2292,7 +2310,7 @@ function updateColorLegend() {
   // 「黒色: データなし」の表示制御 — データなしを白で表示する指標では非表示
   const noDataEl = document.getElementById("legend-nodata");
   if (noDataEl) {
-    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "aging", "bear", "paidBag"]);
+    const whiteForNoData = new Set(["water100", "hyakumeizan", "nuclear", "dam", "military", "heisei", "airraid", "park", "ohsho", "yamaokaya", "rasho", "yakimono", "aging", "bear", "paidBag"]);
     noDataEl.style.display = whiteForNoData.has(activeMetric) ? "none" : "";
   }
   if (activeMetric === "paidBag") {

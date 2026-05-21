@@ -1359,6 +1359,59 @@ async function fetchRamenShop() {
   console.log(`  → wrote rasho.json`);
 }
 
+// ----- 焼き物 (yakimono-plaza.com) -----
+async function fetchYakimono() {
+  console.log("[yakimono]");
+  const munisByPref = await getMunisByPref();
+  const html = await (await fetch("https://www.yakimono-plaza.com/data/data1/", {
+    headers: { "User-Agent": "Mozilla/5.0 japan-stats-map/1.0" }
+  })).text();
+  // <tr ...> ... <td class="column-1">..県名<br /> 市町村名</td> ... </tr>
+  const rows = [...html.matchAll(/<tr[^>]*>[\s\S]*?<td class="column-1">([\s\S]*?)<\/td>/g)];
+  console.log(`  [yakimono] ${rows.length} rows`);
+
+  const counts = new Map(); // "pref|muni" → count
+  let missCount = 0;
+  for (const r of rows) {
+    const cell = r[1].replace(/<span[^>]*>[\s\S]*?<\/span>/g, "");
+    // 「北海道<br /> 函館市」「東京都<br /> 千代田区」など
+    const m = cell.match(/([一-龯]{2,4}(?:都|道|府|県))[\s\S]*?<br\s*\/?>\s*([一-龯々ヵヶ・ー]+)/);
+    if (!m) { missCount++; continue; }
+    const pref = m[1];
+    const muniRaw = m[2].trim();
+    if (!PREF_SET.has(pref)) { missCount++; continue; }
+    const prefMunis = munisByPref.get(pref) || [];
+    let muni = null;
+    // 政令市の区
+    const dcRe = /^(札幌市|仙台市|さいたま市|千葉市|横浜市|川崎市|相模原市|新潟市|静岡市|浜松市|名古屋市|京都市|大阪市|堺市|神戸市|岡山市|広島市|北九州市|福岡市|熊本市)(.+?区)/;
+    const dcMatch = muniRaw.match(dcRe);
+    if (dcMatch) muni = dcMatch[2];
+    else {
+      for (const cand of prefMunis) {
+        if (muniRaw.startsWith(cand)) { muni = cand; break; }
+      }
+      if (!muni) {
+        const gunMatch = muniRaw.match(/^.+?郡(.+?(?:町|村))/);
+        if (gunMatch) muni = gunMatch[1];
+      }
+    }
+    if (!muni) { missCount++; continue; }
+    const key = `${pref}|${muni}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const entries = [];
+  for (const [key, count] of counts) {
+    const [pref, muni] = key.split("|");
+    entries.push([pref, muni, count]);
+  }
+  entries.sort((a, b) => b[2] - a[2]);
+  console.log(`  [yakimono] miss=${missCount}, total ${entries.length} (pref,muni,count)`);
+  console.log(`  [yakimono] top 10:`);
+  entries.slice(0, 10).forEach(([p, m, c]) => console.log(`    ${p} ${m}: ${c}`));
+  await fs.writeFile(path.join(OUT, "yakimono.json"), JSON.stringify(entries));
+  console.log(`  → wrote yakimono.json`);
+}
+
 async function fetchEarthquakeRaw() {
   console.log("[earthquake]");
   const url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
@@ -1404,6 +1457,7 @@ const TASKS = {
   ohsho: fetchOhsho,
   yamaokaya: fetchYamaokaya,
   rasho: fetchRamenShop,
+  yakimono: fetchYakimono,
 };
 
 const args = process.argv.slice(2);
